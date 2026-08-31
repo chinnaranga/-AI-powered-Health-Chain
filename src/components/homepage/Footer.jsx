@@ -135,22 +135,14 @@ export default function Footer() {
                                     </Link>
                                 </li>
                                 <li>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsPrivacyOpen(true)}
-                                        className="text-sm text-slate-500 hover:text-cyan-400 transition-colors text-left cursor-pointer"
-                                    >
+                                    <Link to="/privacy" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
                                         Privacy Policy
-                                    </button>
+                                    </Link>
                                 </li>
                                 <li>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsTermsOpen(true)}
-                                        className="text-sm text-slate-500 hover:text-cyan-400 transition-colors text-left cursor-pointer"
-                                    >
+                                    <Link to="/terms" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
                                         Terms of Service
-                                    </button>
+                                    </Link>
                                 </li>
                                 <li>
                                     <button

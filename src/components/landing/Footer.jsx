@@ -82,7 +82,7 @@ export default function Footer() {
               <ul className="space-y-4 text-xs font-semibold text-[#666666]">
                 <li><Link to="/developers/api" className="hover:text-[#111111] transition-colors">API Reference</Link></li>
                 <li><Link to="/developers/smart-contracts" className="hover:text-[#111111] transition-colors">Smart Contracts</Link></li>
-                <li><a href="https://github.com/chinnaranga/-AI-powered-Health-Chain#readme" target="_blank" rel="noreferrer" className="hover:text-[#111111] transition-colors">Documentation</a></li>
+                <li><Link to="/developers/documentation" className="hover:text-[#111111] transition-colors">Documentation</Link></li>
                 <li><a href="https://github.com/chinnaranga/-AI-powered-Health-Chain" target="_blank" rel="noreferrer" className="hover:text-[#111111] transition-colors">GitHub Node</a></li>
               </ul>
             </div>
@@ -93,16 +93,10 @@ export default function Footer() {
               <ul className="space-y-4 text-xs font-semibold text-[#666666]">
                 <li><Link to="/about" className="hover:text-[#111111] transition-colors">About Us</Link></li>
                 <li><Link to="/careers" className="hover:text-[#111111] transition-colors">Careers</Link></li>
-                <li>
-                  <button 
-                    type="button" 
-                    onClick={() => setIsPrivacyOpen(true)}
-                    className="hover:text-[#111111] transition-colors text-left"
-                  >
-                    Security & Privacy
-                  </button>
-                </li>
-                <li><Link to="/book-demo" className="hover:text-[#111111] transition-colors">Pricing & Demo</Link></li>
+                <li><Link to="/security" className="hover:text-[#111111] transition-colors">Security Architecture</Link></li>
+                <li><Link to="/privacy" className="hover:text-[#111111] transition-colors">Privacy Policy</Link></li>
+                <li><Link to="/pricing" className="hover:text-[#111111] transition-colors">Pricing Plans</Link></li>
+                <li><Link to="/book-demo" className="hover:text-[#111111] transition-colors">Book a Demo</Link></li>
               </ul>
             </div>
 
@@ -118,21 +112,19 @@ export default function Footer() {
                 <span>All Node Networks Operational</span>
               </div>
               <div className="flex items-center gap-3 text-xs text-[#666666] font-medium">
-                <button
-                  type="button"
-                  onClick={() => setIsPrivacyOpen(true)}
-                  className="hover:text-[#111111] transition-colors cursor-pointer"
+                <Link
+                  to="/privacy"
+                  className="hover:text-[#111111] transition-colors"
                 >
                   Privacy Policy
-                </button>
+                </Link>
                 <span>•</span>
-                <button
-                  type="button"
-                  onClick={() => setIsTermsOpen(true)}
-                  className="hover:text-[#111111] transition-colors cursor-pointer"
+                <Link
+                  to="/terms"
+                  className="hover:text-[#111111] transition-colors"
                 >
                   Terms of Service
-                </button>
+                </Link>
                 <span>•</span>
                 <button
                   type="button"

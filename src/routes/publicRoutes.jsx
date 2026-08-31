@@ -32,6 +32,10 @@ const InsurersSolution = lazy(() => import('../pages/InsurersSolution'));
 const ApiReference = lazy(() => import('../pages/ApiReference'));
 const SmartContracts = lazy(() => import('../pages/SmartContracts'));
 const Documentation = lazy(() => import('../pages/Documentation'));
+const Security = lazy(() => import('../pages/Security'));
+const Pricing = lazy(() => import('../pages/Pricing'));
+const PrivacyPolicy = lazy(() => import('../pages/PrivacyPolicy'));
+const TermsOfService = lazy(() => import('../pages/TermsOfService'));
 const Careers = lazy(() => import('../pages/Careers'));
 const CareersAdmin = lazy(() => import('../pages/admin/CareersAdmin'));
 const HealthChainR2Storage = lazy(() => import('../components/HealthChainR2Storage'));
@@ -48,6 +52,10 @@ export const publicRoutes = [
     <Route key="developers-api" path="/developers/api" element={<ApiReference />} />,
     <Route key="developers-smart-contracts" path="/developers/smart-contracts" element={<SmartContracts />} />,
     <Route key="developers-documentation" path="/developers/documentation" element={<Documentation />} />,
+    <Route key="security" path="/security" element={<Security />} />,
+    <Route key="pricing" path="/pricing" element={<Pricing />} />,
+    <Route key="privacy" path="/privacy" element={<PrivacyPolicy />} />,
+    <Route key="terms" path="/terms" element={<TermsOfService />} />,
     <Route key="r2-storage" path="/r2-storage" element={<><Navbar /><HealthChainR2Storage /></>} />,
     <Route key="book-demo" path="/book-demo" element={<><Navbar /><BookDemo /></>} />,
     <Route key="about" path="/about" element={<About />} />,
