@@ -6,9 +6,13 @@ const HospitalLanding = lazy(() => import('../pages/hospital/HospitalLanding'));
 const HospitalDashboard = lazy(() => import('../pages/hospital/HospitalDashboard'));
 const HospitalOnboarding = lazy(() => import('../pages/hospital/HospitalOnboarding'));
 const HospitalAuth = lazy(() => import('../pages/hospital/HospitalAuth'));
+const HospitalERP = lazy(() => import('../pages/HospitalERP'));
 
 export const hospitalRoutes = [
     <Route key="hospital-root" path="/hospital" element={<><Navbar /><HospitalLanding /></>} />,
+    <Route key="hospital-erp-exact" path="/HospitalERP" element={<HospitalERP />} />,
+    <Route key="hospital-erp-kebab" path="/hospital-erp" element={<HospitalERP />} />,
+    <Route key="hospital-erp-nested" path="/hospital/erp" element={<HospitalERP />} />,
     <Route key="hospital-login" path="/hospital/login" element={<HospitalAuth mode="login" />} />,
     <Route key="hospital-register" path="/hospital/register" element={<HospitalAuth mode="register" />} />,
     <Route key="hospital-onboarding" path="/hospital/onboarding" element={<HospitalOnboarding />} />,
