@@ -36,6 +36,7 @@ const Security = lazy(() => import('../pages/Security'));
 const Pricing = lazy(() => import('../pages/Pricing'));
 const PrivacyPolicy = lazy(() => import('../pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('../pages/TermsOfService'));
+const CookieSettings = lazy(() => import('../pages/CookieSettings'));
 const Careers = lazy(() => import('../pages/Careers'));
 const CareersAdmin = lazy(() => import('../pages/admin/CareersAdmin'));
 const HealthChainR2Storage = lazy(() => import('../components/HealthChainR2Storage'));
@@ -56,6 +57,7 @@ export const publicRoutes = [
     <Route key="pricing" path="/pricing" element={<Pricing />} />,
     <Route key="privacy" path="/privacy" element={<PrivacyPolicy />} />,
     <Route key="terms" path="/terms" element={<TermsOfService />} />,
+    <Route key="cookies" path="/cookies" element={<CookieSettings />} />,
     <Route key="r2-storage" path="/r2-storage" element={<><Navbar /><HealthChainR2Storage /></>} />,
     <Route key="book-demo" path="/book-demo" element={<><Navbar /><BookDemo /></>} />,
     <Route key="about" path="/about" element={<About />} />,

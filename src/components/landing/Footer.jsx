@@ -126,13 +126,12 @@ export default function Footer() {
                   Terms of Service
                 </Link>
                 <span>•</span>
-                <button
-                  type="button"
-                  onClick={() => setIsCookiesOpen(true)}
-                  className="hover:text-[#111111] transition-colors cursor-pointer"
+                <Link
+                  to="/cookies"
+                  className="hover:text-[#111111] transition-colors"
                 >
                   Cookie Settings
-                </button>
+                </Link>
               </div>
             </div>
 

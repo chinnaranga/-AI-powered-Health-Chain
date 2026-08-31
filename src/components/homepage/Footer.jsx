@@ -145,13 +145,9 @@ export default function Footer() {
                                     </Link>
                                 </li>
                                 <li>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsCookiesOpen(true)}
-                                        className="text-sm text-slate-500 hover:text-cyan-400 transition-colors text-left cursor-pointer"
-                                    >
+                                    <Link to="/cookies" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
                                         Cookie Settings
-                                    </button>
+                                    </Link>
                                 </li>
                             </ul>
                         </div>
