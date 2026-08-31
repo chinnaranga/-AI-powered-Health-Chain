@@ -72,7 +72,7 @@ export default function Footer() {
                 <li><Link to="/solutions/hospitals" className="hover:text-[#111111] transition-colors">Hospitals</Link></li>
                 <li><Link to="/solutions/clinics" className="hover:text-[#111111] transition-colors">Clinics</Link></li>
                 <li><Link to="/solutions/laboratories" className="hover:text-[#111111] transition-colors">Laboratories</Link></li>
-                <li><Link to="/patient/insurance" className="hover:text-[#111111] transition-colors">Insurers</Link></li>
+                <li><Link to="/solutions/insurers" className="hover:text-[#111111] transition-colors">Insurers</Link></li>
               </ul>
             </div>
 
