@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../../firebase/config';
 import useAuthStore from '../../store/authStore';
 import { toast } from '../../components/Toast';
