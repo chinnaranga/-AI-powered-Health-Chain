@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HealthChain - Enterprise-Grade Web3 Healthcare Records</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- GSAP & ScrollTrigger -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+  
+  <!-- D3.js -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+
+  <!-- Global Canvas Background -->
+  <canvas id="particle-canvas"></canvas>
+
+  <!-- Navigation Header -->
+  <header class="site-header">
+    <div class="container header-container">
+      <div class="logo-area">
+        <i data-lucide="shield" class="logo-icon"></i>
+        <span class="logo-text">Health<span class="logo-accent">Chain</span></span>
+      </div>
+      <nav class="main-nav">
+        <a href="#home">Home</a>
+        <a href="#about">About</a>
+        <a href="#login">Login</a>
+      </nav>
+      <div class="header-actions">
+        <button class="btn btn-primary btn-pill">Get Started &rarr;</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero Section -->
+    <section id="home" class="hero-section">
+      <div class="container hero-container">
+        <div class="hero-content">
+          <div class="badge-pill">
+            <span class="pulse-dot"></span>
+            Blockchain-Powered Healthcare
+          </div>
+          <h1 class="hero-title">
+            <span class="title-line title-line-1">Secure</span>
+            <span class="title-line title-line-2">Healthcare</span>
+            <span class="title-line title-line-3">on Blockchain</span>
+          </h1>
+          <p class="hero-description">
+            Empowering patients and providers with unbreakable medical records driven by decentalized node technology and military grade encryption.
+          </p>
+          <div class="hero-buttons">
+            <button class="btn btn-primary btn-lg">Get Started</button>
+            <button class="btn btn-outline btn-lg">Access Portal</button>
+          </div>
+        </div>
+        
+        <div class="hero-visual">
+          <div class="concentric-rings">
+            <div class="ring ring-outer"></div>
+            <div class="ring ring-inner"></div>
+            
+            <div class="center-card">
+              <i data-lucide="shield-check" class="center-icon"></i>
+            </div>
+            
+            <div class="orbit-chip chip-1">
+              <i data-lucide="key" class="chip-icon"></i>
+            </div>
+            <div class="orbit-chip chip-2">
+              <i data-lucide="activity" class="chip-icon"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cinematic Showcase: The Monolith -->
+    <section class="cinematic-section cinematic-monolith">
+      <div class="cinematic-image-wrapper">
+        <img src="images/hero-monolith.png" alt="HealthChain - Blockchain Healthcare Platform" class="cinematic-img" loading="lazy">
+        <div class="cinematic-overlay">
+          <div class="cinematic-content">
+            <span class="cinematic-label">THE FUTURE OF HEALTH DATA</span>
+            <h2 class="cinematic-title">Immutable. <span class="text-gradient">Encrypted.</span> Yours.</h2>
+            <p class="cinematic-desc">Patient records secured on an unbreakable blockchain ledger — visible only to those you trust.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features-section">
+      <div class="container">
+        <div class="section-header">
+          <h2>Enterprise-Grade <span class="text-gradient">Features</span></h2>
+          <p>Built completely from the ground up to support the complex permissioning demands of healthcare networks.</p>
+        </div>
+        
+        <div class="features-grid">
+          <!-- Feature 1 -->
+          <div class="feature-card">
+            <div class="feature-icon-wrapper">
+              <i data-lucide="file-lock-2"></i>
+            </div>
+            <h3>Encrypted Records</h3>
+            <p>AES-256 military-grade encryption ensures complete patient data privacy and protection against breaches.</p>
+          </div>
+          <!-- Feature 2 -->
+          <div class="feature-card">
+            <div class="feature-icon-wrapper">
+              <i data-lucide="zap"></i>
+            </div>
+            <h3>Instant Smart Contract Access</h3>
+            <p>Grant or revoke doctor access in real-time via auditable, self-executing smart contracts.</p>
+          </div>
+          <!-- Feature 3 -->
+          <div class="feature-card">
+            <div class="feature-icon-wrapper">
+              <i data-lucide="history"></i>
+            </div>
+            <h3>Immutable History</h3>
+            <p>Every medical event is cryptographically hashed and permanently chained to the blockchain ledger.</p>
+          </div>
+          <!-- Feature 4 -->
+          <div class="feature-card">
+            <div class="feature-icon-wrapper">
+              <i data-lucide="users"></i>
+            </div>
+            <h3>Role-Based Access</h3>
+            <p>Fine-grained permissions for patients, doctors, and admins with multi-signature verification.</p>
+          </div>
+          <!-- Feature 5 -->
+          <div class="feature-card">
+            <div class="feature-icon-wrapper">
+              <i data-lucide="hard-drive"></i>
+            </div>
+            <h3>Decentralized Storage</h3>
+            <p>Records distributed across IPFS nodes — no single point of failure, full data sovereignty.</p>
+          </div>
+          <!-- Feature 6 -->
+          <div class="feature-card">
+            <div class="feature-icon-wrapper">
+              <i data-lucide="clipboard-check"></i>
+            </div>
+            <h3>Audit & Compliance Logs</h3>
+            <p>Tamper-proof audit trails meeting HIPAA, GDPR, and healthcare regulatory compliance standards.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cinematic Showcase: The Data Extraction -->
+    <section class="cinematic-section cinematic-extraction">
+      <div class="cinematic-image-wrapper">
+        <img src="images/data-extraction.png" alt="Secure encrypted health data transmission" class="cinematic-img" loading="lazy">
+        <div class="cinematic-overlay overlay-left">
+          <div class="cinematic-content">
+            <span class="cinematic-label">SECURE DATA FLOW</span>
+            <h2 class="cinematic-title">Zero-Knowledge <span class="text-gradient">Transfer</span></h2>
+            <p class="cinematic-desc">End-to-end encrypted medical records flow through decentralized nodes — no middlemen, no exposure, no compromise.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Live Blockchain Graph Section -->
+    <section class="graph-section">
+      <div class="container">
+        <div class="section-header">
+          <h2>Live Blockchain Graph</h2>
+          <p>Explore the network of medical records stored on the blockchain.</p>
+        </div>
+        
+        <div class="graph-container-wrapper">
+          <div id="d3-graph-container"></div>
+          
+          <div class="graph-controls">
+            <button id="zoom-in" title="Zoom In"><i data-lucide="plus"></i></button>
+            <button id="zoom-out" title="Zoom Out"><i data-lucide="minus"></i></button>
+            <button id="fit-graph" title="Fit to Screen"><i data-lucide="maximize"></i></button>
+          </div>
+          
+          <div class="graph-legend">
+            <div class="legend-item">
+              <span class="legend-color color-genesis"></span>
+              <span class="legend-label">Genesis Block</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color color-record"></span>
+              <span class="legend-label">Medical Record</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section class="process-section">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-label">PROCESS</span>
+          <h2>How It Works</h2>
+        </div>
+        
+        <div class="process-steps">
+          <div class="step-connector"></div>
+          
+          <div class="step-item">
+            <div class="step-icon-container">
+              <i data-lucide="upload-cloud"></i>
+            </div>
+            <span class="step-label">STEP 1</span>
+            <h3>Upload</h3>
+            <p>Upload medical records securely through the platform.</p>
+          </div>
+          
+          <div class="step-item">
+            <div class="step-icon-container">
+              <i data-lucide="lock"></i>
+            </div>
+            <span class="step-label">STEP 2</span>
+            <h3>Encrypt</h3>
+            <p>AES-256 encryption applied before any data leaves your device.</p>
+          </div>
+          
+          <div class="step-item">
+            <div class="step-icon-container">
+              <i data-lucide="database"></i>
+            </div>
+            <span class="step-label">STEP 3</span>
+            <h3>Store</h3>
+            <p>Encrypted files stored on IPFS with blockchain hash reference.</p>
+          </div>
+          
+          <div class="step-item">
+            <div class="step-icon-container">
+              <i data-lucide="key-round"></i>
+            </div>
+            <span class="step-label">STEP 4</span>
+            <h3>Grant Access</h3>
+            <p>Use smart contracts to grant time-limited doctor access.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Statistics Section -->
+    <section class="stats-section">
+      <div class="container">
+        <div class="stats-card">
+          <div class="stat-item">
+            <div class="stat-number" data-target="24850">0</div>
+            <div class="stat-label">Records Stored</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number" data-target="142">0</div>
+            <div class="stat-label">Hospitals Connected</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number" data-target="89400">0</div>
+            <div class="stat-label">Contracts Executed</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number-percent">99.9%</div>
+            <div class="stat-label">Uptime SLA</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dashboard Preview Section -->
+    <section class="dashboard-section">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-label">PLATFORM</span>
+          <h2>Dashboard Preview</h2>
+        </div>
+        
+        <div class="dashboard-mockup">
+          <div class="dash-top-row">
+            <div class="dash-stat">
+              <span class="dash-stat-label">Total Records</span>
+              <span class="dash-stat-value">128</span>
+            </div>
+            <div class="dash-stat">
+              <span class="dash-stat-label">Doctors</span>
+              <span class="dash-stat-value">12</span>
+            </div>
+            <div class="dash-stat">
+              <span class="dash-stat-label">Uploads</span>
+              <span class="dash-stat-value">5</span>
+            </div>
+            <div class="dash-stat">
+              <span class="dash-stat-label">Contracts</span>
+              <span class="dash-stat-value">89</span>
+            </div>
+          </div>
+          
+          <div class="dash-bottom-row">
+            <div class="dash-panel panel-activity">
+              <h3>Recent Activity</h3>
+              <div class="activity-list">
+                <div class="activity-row">
+                  <div class="activity-icon"><i data-lucide="activity"></i></div>
+                  <div class="activity-bar"></div>
+                  <div class="activity-time">2m ago</div>
+                </div>
+                <div class="activity-row">
+                  <div class="activity-icon"><i data-lucide="activity"></i></div>
+                  <div class="activity-bar"></div>
+                  <div class="activity-time">5m ago</div>
+                </div>
+                <div class="activity-row">
+                  <div class="activity-icon"><i data-lucide="activity"></i></div>
+                  <div class="activity-bar"></div>
+                  <div class="activity-time">12m ago</div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="dash-panel panel-health">
+              <h3>Network Health</h3>
+              <div class="health-ring-container">
+                <svg viewBox="0 0 36 36" class="circular-chart">
+                  <path class="circle-bg"
+                    d="M18 2.0845
+                      a 15.9155 15.9155 0 0 1 0 31.831
+                      a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <path class="circle"
+                    stroke-dasharray="95, 100"
+                    d="M18 2.0845
+                      a 15.9155 15.9155 0 0 1 0 31.831
+                      a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <text x="18" y="20.35" class="percentage">95%</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cinematic Showcase: The Command Center -->
+    <section class="cinematic-section cinematic-command">
+      <div class="cinematic-image-wrapper">
+        <img src="images/command-center.png" alt="Blockchain health monitoring command center" class="cinematic-img" loading="lazy">
+        <div class="cinematic-overlay overlay-bottom">
+          <div class="cinematic-content">
+            <span class="cinematic-label">COMPLETE VISIBILITY</span>
+            <h2 class="cinematic-title">Monitor. Audit. <span class="text-gradient">Control.</span></h2>
+            <p class="cinematic-desc">Real-time dashboards with blockchain transaction logs, patient vitals, and network health — all from one command center.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section">
+      <div class="container">
+        <div class="cta-card">
+          <h2>Start Securing Records Today</h2>
+          <p>Join the decentralized network and take control of your medical history.</p>
+          <button class="btn btn-primary btn-cta">Initialize Your Node &rarr;</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div class="footer-col brand-col">
+        <div class="logo-area">
+          <i data-lucide="shield" class="logo-icon"></i>
+          <span class="logo-text">Health<span class="logo-accent">Chain</span></span>
+        </div>
+        <p class="brand-desc">Enterprise-grade Web3 platform for decentralized medical records.</p>
+        <div class="social-icons">
+          <a href="#"><i data-lucide="github"></i></a>
+          <a href="#"><i data-lucide="mail"></i></a>
+        </div>
+      </div>
+      
+      <div class="footer-col">
+        <h4>PRODUCT</h4>
+        <ul>
+          <li><a href="#">Features</a></li>
+          <li><a href="#">Security</a></li>
+          <li><a href="#">Pricing</a></li>
+          <li><a href="#">Roadmap</a></li>
+        </ul>
+      </div>
+      
+      <div class="footer-col">
+        <h4>DEVELOPERS</h4>
+        <ul>
+          <li><a href="#">Documentation &nearr;</a></li>
+          <li><a href="#">GitHub &nearr;</a></li>
+          <li><a href="#">API Reference</a></li>
+          <li><a href="#">Smart Contracts</a></li>
+        </ul>
+      </div>
+      
+      <div class="footer-col">
+        <h4>COMPANY</h4>
+        <ul>
+          <li><a href="#">About</a></li>
+          <li><a href="#">Contact &nearr;</a></li>
+          <li><a href="#">Privacy Policy</a></li>
+          <li><a href="#" class="accent-link">Terms of Service</a></li>
+        </ul>
+      </div>
+    </div>
+    
+    <div class="container bottom-bar">
+      <div class="copyright">&copy; 2026 HealthChain. All rights reserved.</div>
+      <div class="system-status">
+        <span class="status-dot"></span>
+        All systems operational
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="main.js"></script>
+  <script src="graph.js"></script>
+</body>
+</html>

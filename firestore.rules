@@ -1,0 +1,246 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return request.auth != null && request.auth.token != null && request.auth.token.role != null ? request.auth.token.role : 'patient';
+    }
+
+    function getUserHospitalId() {
+      return request.auth != null && request.auth.token != null && request.auth.token.hospitalId != null ? request.auth.token.hospitalId : 'default_hospital';
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (getUserRole() == 'super_admin' || getUserRole() == 'admin');
+    }
+
+    function isHospitalAdmin() {
+      return isSignedIn() && (getUserRole() == 'hospital_admin' || isSuperAdmin());
+    }
+
+    function isDoctor() {
+      return isSignedIn() && (getUserRole() == 'doctor' || isHospitalAdmin());
+    }
+
+    function isClinicalStaff() {
+      return isSignedIn() && (getUserRole() == 'clinical' || isDoctor());
+    }
+
+    function isSameTenant(tenantId) {
+      return isSuperAdmin() || (isSignedIn() && getUserHospitalId() == tenantId);
+    }
+
+    // 1. Users Collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (request.auth.uid == userId || isHospitalAdmin());
+    }
+
+    // 2. Roles Collection
+    match /roles/{roleId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // 3. Hospitals Collection
+    match /hospitals/{hospitalId} {
+      allow read: if isSignedIn();
+      allow write: if isHospitalAdmin();
+    }
+
+    // 4. Departments Collection
+    match /departments/{departmentId} {
+      allow read: if isHospitalAdmin();
+      allow write: if isHospitalAdmin();
+    }
+
+    // 5. Doctors Collection
+    match /doctors/{doctorId} {
+      allow read: if isHospitalAdmin();
+      allow write: if isHospitalAdmin() || (isSignedIn() && request.auth.uid == doctorId);
+    }
+
+    // 6. Patients Collection
+    match /patients/{patientId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == patientId || 
+        isClinicalStaff() || 
+        isHospitalAdmin()
+      );
+      allow create, update: if isSignedIn() && (
+        request.auth.uid == patientId || 
+        isClinicalStaff() || 
+        isHospitalAdmin()
+      );
+      allow delete: if isHospitalAdmin();
+    }
+
+    // 7. Clinical Records Collection
+    match /clinicalRecords/{recordId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.patientId || isDoctor());
+      allow create: if isSignedIn() && isClinicalStaff();
+      allow update: if isSignedIn() && isClinicalStaff() && isSameTenant(resource.data.hospitalId);
+      allow delete: if isHospitalAdmin();
+    }
+
+    // 8. Appointments Collection
+    match /appointments/{appId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        request.auth.uid == resource.data.doctorId || 
+        isClinicalStaff()
+      );
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        request.auth.uid == resource.data.doctorId || 
+        isClinicalStaff()
+      );
+      allow delete: if isHospitalAdmin();
+    }
+
+    // 9. Prescriptions Collection
+    match /prescriptions/{presId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        isDoctor()
+      );
+      allow create: if isDoctor();
+      allow update, delete: if isDoctor() && isSameTenant(resource.data.hospitalId);
+    }
+
+    // 10. Lab Reports Collection
+    match /labReports/{reportId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        isClinicalStaff()
+      );
+      allow create, update: if isClinicalStaff();
+      allow delete: if isHospitalAdmin();
+    }
+
+    // 11. Radiology Reports Collection
+    match /radiologyReports/{reportId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        isClinicalStaff()
+      );
+      allow create, update: if isClinicalStaff();
+      allow delete: if isHospitalAdmin();
+    }
+
+    // 12. Billing Records Collection
+    match /billingRecords/{billingId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        isHospitalAdmin()
+      );
+      allow write: if isHospitalAdmin();
+    }
+
+    // 13. Insurance Claims Collection
+    match /insuranceClaims/{claimId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        isHospitalAdmin()
+      );
+      allow write: if isHospitalAdmin();
+    }
+
+    // 14. Consent Logs Collection
+    match /consentLogs/{consentId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.patientId || 
+        isClinicalStaff()
+      );
+      allow create, update: if isSignedIn();
+      allow delete: if false; // Immutable
+    }
+
+    // 15. AI Conversations Collection
+    match /aiConversations/{convId} {
+      allow read, write: if isSignedIn() && resource.data.userId == request.auth.uid;
+      match /messages/{msgId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // 16. Audit Logs Collection (Immutable)
+    match /auditLogs/{logId} {
+      allow read: if isHospitalAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false; // Immutable audit security rule
+    }
+
+    // 17. Notifications Collection
+    match /notifications/{notificationId} {
+      allow read, update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 18. Documents Collection (Metadata for Firebase Storage files)
+    match /documents/{docId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.patientId || isClinicalStaff());
+      allow create, update: if isSignedIn();
+      allow delete: if isHospitalAdmin();
+    }
+
+    // 19. Integrations Collection
+    match /integrations/{integrationId} {
+      allow read, write: if isHospitalAdmin();
+    }
+
+    // 20. Settings Collection
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // Legacy support matchers
+    match /records/{recordId} {
+      allow read, write: if isSignedIn();
+    }
+    match /clinical_users/{userId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 21. Cloudflare R2 File Metadata Collection (Stores metadata only, no binary payloads)
+    match /r2FileMetadata/{fileId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.patientId || request.auth.uid == resource.data.uploadedBy || isClinicalStaff());
+      allow create: if isSignedIn() && request.resource.data.storageProvider == 'cloudflare-r2';
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.uploadedBy ||
+        isSameTenant(resource.data.hospitalId)
+      );
+      allow delete: if isHospitalAdmin() || (isSignedIn() && request.auth.uid == resource.data.uploadedBy);
+    }
+
+    // 22. Cloudflare R2 Monthly Storage Quota Tracking Collections
+    match /storageUsage/{usageId} {
+      allow read: if isSignedIn();
+      allow write: if isHospitalAdmin();
+    }
+
+    match /storageQuota/{quotaId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    match /storageEvents/{eventId} {
+      allow read: if isHospitalAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false; // Immutable usage logs
+    }
+
+    // Default Deny All Unmatched Collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

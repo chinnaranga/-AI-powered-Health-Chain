@@ -1,0 +1,30 @@
+# Cloudflare HealthChain Worker & Pages Configuration
+name = "healthchain-api"
+main = "worker/index.js"
+compatibility_date = "2026-08-01"
+
+# Environment Variables
+[vars]
+ENVIRONMENT = "production"
+JWT_SECRET = "healthchain-cloudflare-jwt-secret-key-2026"
+JWT_REFRESH_SECRET = "healthchain-cloudflare-refresh-secret-key-2026"
+BACKEND_URL = "http://localhost:3001/api"
+NEXT_PUBLIC_APP_URL = "http://localhost:3000"
+R2_ACCOUNT_ID = "1090acaf7bd6292c4c239a2cef49323c"
+R2_BUCKET_NAME = "healthchain-storage"
+
+# Cloudflare D1 SQL Relational Database Binding
+[[d1_databases]]
+binding = "DB"
+database_name = "healthchain-d1"
+database_id = "healthchain_d1_db_id"
+
+# Cloudflare KV Session Store Binding
+[[kv_namespaces]]
+binding = "KV_SESSIONS"
+id = "healthchain_kv_sessions_id"
+
+# Cloudflare R2 Object Storage Binding
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "healthchain-storage"

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Rounded Box Container -->
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="12" />
+  
+  <!-- Pulse Wave Line -->
+  <path d="M 120 256 H 180 L 232 136 L 288 360 L 332 212 L 354 256 H 392" 
+        stroke="#162A24" 
+        stroke-width="32" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" />
+</svg>

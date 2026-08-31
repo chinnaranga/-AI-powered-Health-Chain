@@ -1,0 +1,19 @@
+{
+  "name": "healthchain-functions",
+  "version": "1.0.0",
+  "description": "HealthChain Firebase Cloud Functions backend",
+  "main": "index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": "22"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^7.2.5",
+    "resend": "^6.12.4",
+    "uuid": "^11.0.5"
+  }
+}

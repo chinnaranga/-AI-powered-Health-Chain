@@ -1,0 +1,21 @@
+[
+  {
+    "origin": [
+      "https://healthcare-edb75.web.app",
+      "https://healthcare-edb75.firebaseapp.com",
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "http://127.0.0.1:5173"
+    ],
+    "method": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "Content-Length",
+      "X-Requested-With",
+      "Access-Control-Allow-Origin",
+      "x-goog-resumable"
+    ]
+  }
+]

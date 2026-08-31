@@ -1,0 +1,61 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug*.log*
+
+# Firebase cache
+.firebase/
+.dataconnect
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+*.db
+*.sqlite
+*.sqlite3
+
+# Dependency directories
+node_modules/
+**/node_modules/
+bower_components/
+
+# Python virtualenv & cache
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# IDE & Editor files
+.vscode/
+.idea/
+.claude/
+.agents/
+.DS_Store
+scratch/
+
+# Build and output directories
+dist/
+build/
+coverage/
+.nyc_output/
+.cache/
+**/cache/
+**/artifacts/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Temporary / duplicate files
+vite.config.js.timestamp*
+package-lock *.json
+*.bak

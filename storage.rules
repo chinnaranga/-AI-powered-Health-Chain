@@ -1,0 +1,47 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Hospital multi-tenant medical documents
+    match /hospitals/{hospitalId}/patients/{patientId}/{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Patient records path: records/{patientId}/{recordFileName}
+    match /records/{patientId}/{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Prescriptions path
+    match /prescriptions/{patientId}/{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Diagnostic Scans path (DICOM, X-Rays, Lab Images)
+    match /lab_scans/{patientId}/{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Profile photos path
+    match /profiles/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Careers Resumes path: careers_resumes/{fileName}
+    match /careers_resumes/{fileName} {
+      allow get: if true;
+      allow create: if request.resource.size < 10 * 1024 * 1024;
+      allow read, update, delete: if isSignedIn();
+    }
+
+    // Global Deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

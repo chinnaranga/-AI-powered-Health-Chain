@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Favicon Container -->
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="16" />
+  
+  <!-- Pulse Wave Line -->
+  <path d="M 110 256 H 175 L 230 128 L 290 368 L 335 204 L 358 256 H 402" 
+        stroke="#162A24" 
+        stroke-width="38" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" />
+</svg>
