@@ -69,7 +69,7 @@ export default function Footer() {
             <div>
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#111111] mb-6">Solutions</h4>
               <ul className="space-y-4 text-xs font-semibold text-[#666666]">
-                <li><Link to="/hospital/landing" className="hover:text-[#111111] transition-colors">Hospitals</Link></li>
+                <li><Link to="/solutions/hospitals" className="hover:text-[#111111] transition-colors">Hospitals</Link></li>
                 <li><Link to="/clinical/workspace" className="hover:text-[#111111] transition-colors">Clinics</Link></li>
                 <li><Link to="/patient/lab-imaging" className="hover:text-[#111111] transition-colors">Laboratories</Link></li>
                 <li><Link to="/patient/insurance" className="hover:text-[#111111] transition-colors">Insurers</Link></li>

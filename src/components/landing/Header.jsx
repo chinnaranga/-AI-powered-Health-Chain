@@ -18,7 +18,7 @@ export default function Header() {
 
   const navLinks = [
     { name: 'Solutions', href: '/#solutions' },
-    { name: 'Hospitals', href: '/hospital/landing' },
+    { name: 'Hospitals', href: '/solutions/hospitals' },
     { name: 'Doctors', href: '/doctor-portal' },
     { name: 'Patients', href: '/patient-app' },
     { name: 'Developers', href: '/#developers' },
