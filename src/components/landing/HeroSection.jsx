@@ -65,22 +65,6 @@ export default function HeroSection() {
               Sign In
             </button>
           </div>
-
-          {/* Real Customer Statistics */}
-          <div className="border-t border-[#ECECEC] pt-8 grid grid-cols-3 gap-6 max-w-md">
-            <div>
-              <p className="text-2xl font-bold tracking-tight text-[#111111]">500K+</p>
-              <p className="text-[10px] uppercase font-bold tracking-wider text-[#666666] mt-1">Verified Patients</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold tracking-tight text-[#111111]">150+</p>
-              <p className="text-[10px] uppercase font-bold tracking-wider text-[#666666] mt-1">Connected Hospitals</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold tracking-tight text-[#111111]">100M+</p>
-              <p className="text-[10px] uppercase font-bold tracking-wider text-[#666666] mt-1">Secured Records</p>
-            </div>
-          </div>
         </motion.div>
 
         {/* Right Side: Laptop Mockup & Connection Graph */}
