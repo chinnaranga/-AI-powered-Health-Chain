@@ -29,6 +29,7 @@ const HospitalsSolution = lazy(() => import('../pages/HospitalsSolution'));
 const ClinicsSolution = lazy(() => import('../pages/ClinicsSolution'));
 const LaboratoriesSolution = lazy(() => import('../pages/LaboratoriesSolution'));
 const InsurersSolution = lazy(() => import('../pages/InsurersSolution'));
+const ApiReference = lazy(() => import('../pages/ApiReference'));
 const Careers = lazy(() => import('../pages/Careers'));
 const CareersAdmin = lazy(() => import('../pages/admin/CareersAdmin'));
 const HealthChainR2Storage = lazy(() => import('../components/HealthChainR2Storage'));
@@ -42,6 +43,7 @@ export const publicRoutes = [
     <Route key="solutions-clinics" path="/solutions/clinics" element={<ClinicsSolution />} />,
     <Route key="solutions-laboratories" path="/solutions/laboratories" element={<LaboratoriesSolution />} />,
     <Route key="solutions-insurers" path="/solutions/insurers" element={<InsurersSolution />} />,
+    <Route key="developers-api" path="/developers/api" element={<ApiReference />} />,
     <Route key="r2-storage" path="/r2-storage" element={<><Navbar /><HealthChainR2Storage /></>} />,
     <Route key="book-demo" path="/book-demo" element={<><Navbar /><BookDemo /></>} />,
     <Route key="about" path="/about" element={<><Navbar /><About /></>} />,

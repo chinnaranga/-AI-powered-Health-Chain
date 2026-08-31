@@ -21,7 +21,7 @@ export default function Header() {
     { name: 'Hospitals', href: '/solutions/hospitals' },
     { name: 'Doctors', href: '/doctor-portal' },
     { name: 'Patients', href: '/patient-app' },
-    { name: 'Developers', href: '/#developers' },
+    { name: 'Developers', href: '/developers/api' },
     { name: 'Security', href: '/#security' },
     { name: 'Resources', href: '/#resources' },
     { name: 'Pricing', href: '/#pricing' },

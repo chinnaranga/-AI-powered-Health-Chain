@@ -80,7 +80,7 @@ export default function Footer() {
             <div>
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#111111] mb-6">Developers</h4>
               <ul className="space-y-4 text-xs font-semibold text-[#666666]">
-                <li><Link to="/admin/api-logs" className="hover:text-[#111111] transition-colors">API Reference</Link></li>
+                <li><Link to="/developers/api" className="hover:text-[#111111] transition-colors">API Reference</Link></li>
                 <li><a href="https://github.com/chinnaranga/-AI-powered-Health-Chain" target="_blank" rel="noreferrer" className="hover:text-[#111111] transition-colors">Smart Contracts</a></li>
                 <li><a href="https://github.com/chinnaranga/-AI-powered-Health-Chain#readme" target="_blank" rel="noreferrer" className="hover:text-[#111111] transition-colors">Documentation</a></li>
                 <li><a href="https://github.com/chinnaranga/-AI-powered-Health-Chain" target="_blank" rel="noreferrer" className="hover:text-[#111111] transition-colors">GitHub Node</a></li>

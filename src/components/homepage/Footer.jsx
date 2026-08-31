@@ -111,7 +111,7 @@ export default function Footer() {
                                     </a>
                                 </li>
                                 <li>
-                                    <Link to="/admin/api-logs" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
+                                    <Link to="/developers/api" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
                                         API Reference
                                     </Link>
                                 </li>
