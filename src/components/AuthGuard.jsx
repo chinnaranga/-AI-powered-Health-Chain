@@ -4,6 +4,7 @@ import useAuthStore from '../store/authStore';
 import LoadingOverlay from './LoadingOverlay';
 import { FEATURES } from '../config/features';
 import { toast } from './Toast';
+import { hasUserAcceptedCurrentTerms } from '../services/termsConsentService';
 
 /**
  * AuthGuard - Protected Route Wrapper.
@@ -29,6 +30,17 @@ export default function AuthGuard({ children, basePath }) {
         if (role === null || role === undefined) {
             console.info('[AuthGuard] No role assigned, redirecting to select-role.');
             navigate('/select-role', { replace: true });
+            return;
+        }
+
+        // Enforce Terms & Conditions acceptance check before accessing protected application areas
+        const isTermsAccepted = hasUserAcceptedCurrentTerms(user);
+        if (!isTermsAccepted) {
+            if (currentPath !== '/terms/accept') {
+                console.info('[AuthGuard] Current Terms & Conditions not accepted, redirecting to /terms/accept.');
+                navigate('/terms/accept', { replace: true, state: { from: location.pathname } });
+                return;
+            }
             return;
         }
 

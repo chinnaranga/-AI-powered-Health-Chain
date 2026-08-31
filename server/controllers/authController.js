@@ -166,3 +166,33 @@ export const getMe = async (req, res) => {
 export const logoutUser = async (req, res) => {
     res.json({ success: true, message: 'Logged out successfully.' });
 };
+
+export const saveTermsConsent = async (req, res) => {
+    try {
+        const uid = req.user?.uid || req.body?.userId;
+        const { termsVersion = '1.0' } = req.body;
+        if (!uid) {
+            return res.status(400).json({ success: false, message: 'User ID required' });
+        }
+
+        const consentData = {
+            userId: uid,
+            termsVersion,
+            accepted: true,
+            acceptedAt: new Date().toISOString()
+        };
+
+        // Store authoritative consent record in terms_consent collection
+        await adminDb.collection('terms_consent').doc(uid).set(consentData, { merge: true });
+
+        // Update user profile with termsAcceptedVersion
+        await adminDb.collection('users').doc(uid).set({
+            termsAcceptedVersion: termsVersion,
+            termsConsentAt: consentData.acceptedAt
+        }, { merge: true });
+
+        res.json({ success: true, consent: consentData });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
