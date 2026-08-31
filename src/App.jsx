@@ -7,6 +7,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import AuthProvider from './providers/AuthProvider';
 import { FEATURES } from './config/features';
 import Maintenance from './pages/Maintenance';
+import CookieConsent from './components/common/CookieConsent';
 import AppRoutes from './routes';
 
 /**
@@ -32,6 +33,7 @@ function App() {
                     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans antialiased selection:bg-cyan-500 selection:text-white">
                         <ConnectionStatus />
                         <ToastContainer />
+                        <CookieConsent />
                         <AnimatePresence mode="wait">
                             <Suspense
                                 fallback={
