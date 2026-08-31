@@ -18,14 +18,14 @@ export default function Header() {
 
   const navLinks = [
     { name: 'Solutions', href: '/#solutions' },
-    { name: 'Hospitals', href: '/#hospitals' },
-    { name: 'Doctors', href: '/#doctors' },
-    { name: 'Patients', href: '/#patients' },
+    { name: 'Hospitals', href: '/hospital/landing' },
+    { name: 'Doctors', href: '/doctor-portal' },
+    { name: 'Patients', href: '/patient-app' },
     { name: 'Developers', href: '/#developers' },
     { name: 'Security', href: '/#security' },
     { name: 'Resources', href: '/#resources' },
     { name: 'Pricing', href: '/#pricing' },
-    { name: 'About', href: '/#about' },
+    { name: 'About', href: '/about' },
   ];
 
   return (

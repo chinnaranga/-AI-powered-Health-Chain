@@ -58,8 +58,8 @@ export default function Footer() {
             <div>
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#111111] mb-6">Products</h4>
               <ul className="space-y-4 text-xs font-semibold text-[#666666]">
-                <li><Link to="/patient/dashboard" className="hover:text-[#111111] transition-colors">Patient App</Link></li>
-                <li><Link to="/doctor/dashboard" className="hover:text-[#111111] transition-colors">Doctor Portal</Link></li>
+                <li><Link to="/patient-app" className="hover:text-[#111111] transition-colors">Patient App</Link></li>
+                <li><Link to="/doctor-portal" className="hover:text-[#111111] transition-colors">Doctor Portal</Link></li>
                 <li><Link to="/HospitalERP" className="hover:text-[#111111] transition-colors">Hospital ERP</Link></li>
                 <li><Link to="/clinical/dashboard" className="hover:text-[#111111] transition-colors">Lab Gateway</Link></li>
               </ul>

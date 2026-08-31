@@ -72,13 +72,13 @@ export default function Footer() {
                             </h4>
                             <ul className="space-y-2.5">
                                 <li>
-                                    <Link to="/patient/dashboard" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
-                                        Patient Portal
+                                    <Link to="/patient-app" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
+                                        Patient App
                                     </Link>
                                 </li>
                                 <li>
-                                    <Link to="/doctor/dashboard" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
-                                        Doctor Verification
+                                    <Link to="/doctor-portal" className="text-sm text-slate-500 hover:text-cyan-400 transition-colors">
+                                        Doctor Portal
                                     </Link>
                                 </li>
                                 <li>
