@@ -24,6 +24,7 @@ const BookDemo = lazy(() => import('../pages/BookDemo'));
 const About = lazy(() => import('../pages/About'));
 const PatientApp = lazy(() => import('../pages/PatientApp'));
 const DoctorPortal = lazy(() => import('../pages/DoctorPortal'));
+const LabGateway = lazy(() => import('../pages/LabGateway'));
 const Careers = lazy(() => import('../pages/Careers'));
 const CareersAdmin = lazy(() => import('../pages/admin/CareersAdmin'));
 const HealthChainR2Storage = lazy(() => import('../components/HealthChainR2Storage'));
@@ -32,6 +33,7 @@ export const publicRoutes = [
     <Route key="home" path="/" element={<><Navbar /><HealthChainLanding /></>} />,
     <Route key="patient-app" path="/patient-app" element={<PatientApp />} />,
     <Route key="doctor-portal" path="/doctor-portal" element={<DoctorPortal />} />,
+    <Route key="lab-gateway" path="/lab-gateway" element={<LabGateway />} />,
     <Route key="r2-storage" path="/r2-storage" element={<><Navbar /><HealthChainR2Storage /></>} />,
     <Route key="book-demo" path="/book-demo" element={<><Navbar /><BookDemo /></>} />,
     <Route key="about" path="/about" element={<><Navbar /><About /></>} />,

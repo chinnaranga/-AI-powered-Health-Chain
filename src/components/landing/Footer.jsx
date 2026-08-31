@@ -61,7 +61,7 @@ export default function Footer() {
                 <li><Link to="/patient-app" className="hover:text-[#111111] transition-colors">Patient App</Link></li>
                 <li><Link to="/doctor-portal" className="hover:text-[#111111] transition-colors">Doctor Portal</Link></li>
                 <li><Link to="/HospitalERP" className="hover:text-[#111111] transition-colors">Hospital ERP</Link></li>
-                <li><Link to="/clinical/dashboard" className="hover:text-[#111111] transition-colors">Lab Gateway</Link></li>
+                <li><Link to="/lab-gateway" className="hover:text-[#111111] transition-colors">Lab Gateway</Link></li>
               </ul>
             </div>
 
