@@ -8,7 +8,6 @@ import ProductShowcase from '../components/landing/ProductShowcase';
 import FeaturesSection from '../components/landing/FeaturesSection';
 import SecuritySection from '../components/landing/SecuritySection';
 import WhyHealthChain from '../components/landing/WhyHealthChain';
-import StatsSection from '../components/landing/StatsSection';
 import TestimonialsSection from '../components/landing/TestimonialsSection';
 import PricingSection from '../components/landing/PricingSection';
 import FAQSection from '../components/landing/FAQSection';
@@ -44,9 +43,6 @@ export default function HealthChainLanding() {
         
         {/* Traditional vs HealthChain Matrix */}
         <WhyHealthChain />
-        
-        {/* Typographic Impact Statistics */}
-        <StatsSection />
         
         {/* Community Testimony */}
         <TestimonialsSection />
