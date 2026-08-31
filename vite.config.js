@@ -1,5 +1,10 @@
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -46,6 +51,11 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      'firebase/auth': path.resolve(__dirname, './src/firebase/auth.js'),
+      'firebase/firestore': path.resolve(__dirname, './src/firebase/firestoreUtils.js'),
+      'firebase/storage': path.resolve(__dirname, './src/firebase/storage.js'),
+      'firebase/app': path.resolve(__dirname, './src/firebase/config.js'),
+      'firebase/config': path.resolve(__dirname, './src/firebase/config.js'),
       'ipfs-core-utils/files/normalise-input-single':
         'ipfs-core-utils/files/normalise-input-single.browser',
       'ipfs-core-utils/files/normalise-input-multiple':
