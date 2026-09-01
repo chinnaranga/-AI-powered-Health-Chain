@@ -57,5 +57,5 @@ coverage/
 
 # Temporary / duplicate files
 vite.config.js.timestamp*
-package-lock *.json
+package-lock.json
 *.bak
