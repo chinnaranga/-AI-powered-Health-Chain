@@ -1,3 +1,4 @@
+import express from 'express';
 import { googleLogin, registerUser, loginUser, refreshToken, getMe, logoutUser, saveTermsConsent } from '../controllers/authController.js';
 import { authenticateJwt } from '../middleware/authMiddleware.js';
 
