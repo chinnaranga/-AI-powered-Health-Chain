@@ -19,68 +19,83 @@ export default function DoctorOnboarding() {
 
     // Onboarding wizard steps (1 to 4)
     const [step, setStep] = useState(1);
-    const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+    const [isLoadingProfile, setIsLoadingProfile] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
 
+    // Initial cache extraction
+    const initialSavedDoctor = (() => {
+        try {
+            const raw = localStorage.getItem('hc_doctor_profile') || localStorage.getItem('hc_patient_profile');
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    })();
+    const initialStoredPhone = localStorage.getItem('hc_phone') || '';
+    const initialStoredEmail = localStorage.getItem('hc_email') || '';
+    const initialStoredName = localStorage.getItem('hc_name') || '';
+    const initialUser = useAuthStore.getState().user || user || {};
+
     // Form inputs
     const [formData, setFormData] = useState({
-        fullName: '',
-        gender: 'Male',
-        phone: '',
-        email: '',
-        license: '',
-        stateCouncil: 'State Medical Council (Delhi)',
-        specialization: 'Cardiology',
-        hospital: 'Central General Hospital',
-        department: 'Cardiology',
-        nodeIp: '192.168.1.104',
-        nodePort: '8545',
-        walletAddress: '',
-        gasPreference: 'Standard',
-        mfaEnabled: true,
-        smsEmergencyAlerts: true,
-        emailAuditSummary: false,
+        fullName: initialSavedDoctor?.displayName || initialSavedDoctor?.name || initialSavedDoctor?.fullName || initialUser?.displayName || (initialUser?.name && initialUser.name !== 'USER' ? initialUser.name : '') || initialStoredName || '',
+        gender: initialSavedDoctor?.gender || initialUser?.gender || 'Male',
+        phone: initialSavedDoctor?.phoneNumber || initialSavedDoctor?.phone || initialUser?.phoneNumber || initialUser?.phone || initialStoredPhone || '',
+        email: initialSavedDoctor?.email || (initialUser?.email && !initialUser.email.includes('user@hospital.org') && !initialUser.email.includes('user@healthchain.io') ? initialUser.email : '') || initialStoredEmail || '',
+        license: initialSavedDoctor?.license || '',
+        stateCouncil: initialSavedDoctor?.stateCouncil || 'State Medical Council (Delhi)',
+        specialization: initialSavedDoctor?.specialization || 'Cardiology',
+        hospital: initialSavedDoctor?.hospital || 'Central General Hospital',
+        department: initialSavedDoctor?.department || 'Cardiology',
+        nodeIp: initialSavedDoctor?.nodeIp || '192.168.1.104',
+        nodePort: initialSavedDoctor?.nodePort || '8545',
+        walletAddress: initialSavedDoctor?.walletAddress || initialUser?.walletAddress || localStorage.getItem('hc_wallet') || '',
+        gasPreference: initialSavedDoctor?.gasPreference || 'Standard',
+        mfaEnabled: initialSavedDoctor?.mfaEnabled ?? true,
+        smsEmergencyAlerts: initialSavedDoctor?.smsEmergencyAlerts ?? true,
+        emailAuditSummary: initialSavedDoctor?.emailAuditSummary ?? false,
     });
 
     // Verification simulators
     const [isVerifyingLicense, setIsVerifyingLicense] = useState(false);
-    const [licenseVerified, setLicenseVerified] = useState(false);
+    const [licenseVerified, setLicenseVerified] = useState(!!initialSavedDoctor?.license);
     
     const [isConnectingNode, setIsConnectingNode] = useState(false);
-    const [nodeConnected, setNodeConnected] = useState(false);
-    const [nodeLatency, setNodeLatency] = useState(0);
+    const [nodeConnected, setNodeConnected] = useState(!!initialSavedDoctor?.nodeIp);
+    const [nodeLatency, setNodeLatency] = useState(12);
 
     const [isGeneratingWallet, setIsGeneratingWallet] = useState(false);
-    const [walletGenerated, setWalletGenerated] = useState(false);
+    const [walletGenerated, setWalletGenerated] = useState(!!(initialSavedDoctor?.walletAddress || initialUser?.walletAddress));
 
     // Fetch and pre-fill existing user profile details
     useEffect(() => {
         const fetchProfile = async () => {
-            if (!user?.uid) return;
-            setIsLoadingProfile(true);
+            const currentUid = user?.uid || initialUser?.uid;
+            if (!currentUid) {
+                setIsLoadingProfile(false);
+                return;
+            }
             try {
-                const docRef = doc(db, 'users', user.uid);
+                const docRef = doc(db, 'users', currentUid);
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     setFormData(prev => ({
                         ...prev,
-                        fullName: data.fullName || data.name || user.displayName || '',
-                        email: data.email || user.email || '',
-                        phone: data.phone || user.phoneNumber || '',
-                        license: data.license || '',
-                        hospital: data.hospital || data.companyName || 'Central General Hospital',
-                        department: data.department || data.specialization || 'Cardiology',
-                        specialization: data.specialization || data.department || 'Cardiology',
-                        walletAddress: data.walletAddress || user.walletAddress || '',
-                        stateCouncil: data.stateCouncil || 'State Medical Council (Delhi)',
-                        nodeIp: data.nodeIp || '192.168.1.104',
-                        nodePort: data.nodePort || '8545',
-                        gasPreference: data.gasPreference || 'Standard',
-                        mfaEnabled: data.mfaEnabled ?? true,
-                        smsEmergencyAlerts: data.smsEmergencyAlerts ?? true,
-                        emailAuditSummary: data.emailAuditSummary ?? false,
+                        fullName: data.fullName || data.name || user?.displayName || prev.fullName,
+                        email: data.email || user?.email || prev.email,
+                        phone: data.phone || user?.phoneNumber || prev.phone,
+                        license: data.license || prev.license,
+                        hospital: data.hospital || data.companyName || prev.hospital,
+                        department: data.department || data.specialization || prev.department,
+                        specialization: data.specialization || data.department || prev.specialization,
+                        walletAddress: data.walletAddress || user?.walletAddress || prev.walletAddress,
+                        stateCouncil: data.stateCouncil || prev.stateCouncil,
+                        nodeIp: data.nodeIp || prev.nodeIp,
+                        nodePort: data.nodePort || prev.nodePort,
+                        gasPreference: data.gasPreference || prev.gasPreference,
+                        mfaEnabled: data.mfaEnabled ?? prev.mfaEnabled,
+                        smsEmergencyAlerts: data.smsEmergencyAlerts ?? prev.smsEmergencyAlerts,
+                        emailAuditSummary: data.emailAuditSummary ?? prev.emailAuditSummary,
                     }));
                     if (data.license) {
                         setLicenseVerified(true);
@@ -92,19 +107,9 @@ export default function DoctorOnboarding() {
                     if (data.walletAddress) {
                         setWalletGenerated(true);
                     }
-                } else {
-                    // Fallback pre-fill from Google or Auth context
-                    setFormData(prev => ({
-                        ...prev,
-                        fullName: user.displayName || '',
-                        email: user.email || '',
-                        phone: user.phoneNumber || '',
-                        walletAddress: user.walletAddress || '',
-                    }));
                 }
             } catch (err) {
-                console.error('Error pre-filling doctor profile:', err);
-                toast.error('Failed to load identity profile.');
+                console.warn('Doctor profile remote sync notice:', err.message);
             } finally {
                 setIsLoadingProfile(false);
             }
@@ -217,8 +222,34 @@ export default function DoctorOnboarding() {
                 details: `Clinical node initialization complete. Workstation ${formData.nodeIp}:${formData.nodePort} certified.`,
             });
 
+            // Save doctor profile to local storage cache for instant profile sync
+            const doctorCache = {
+                displayName: formData.fullName,
+                name: formData.fullName,
+                fullName: formData.fullName,
+                phoneNumber: formData.phone,
+                phone: formData.phone,
+                email: formData.email,
+                gender: formData.gender,
+                license: formData.license,
+                hospital: formData.hospital,
+                department: formData.department,
+                specialization: formData.specialization,
+                walletAddress: formData.walletAddress,
+                stateCouncil: formData.stateCouncil,
+                nodeIp: formData.nodeIp,
+                nodePort: formData.nodePort,
+                isVerified: true,
+                profileComplete: true,
+                onboardingComplete: true
+            };
+            localStorage.setItem('hc_doctor_profile', JSON.stringify(doctorCache));
+            if (formData.phone) localStorage.setItem('hc_phone', formData.phone);
+            if (formData.email) localStorage.setItem('hc_email', formData.email);
+            if (formData.fullName) localStorage.setItem('hc_name', formData.fullName);
+
             // Update AuthStore state with new database record
-            await setFirebaseUser(finalPayload, 'doctor');
+            await setFirebaseUser({ ...finalPayload, ...doctorCache }, 'doctor');
 
             // Send Firebase email verification immediately after doctor onboarding completion
             if (auth.currentUser && !auth.currentUser.emailVerified) {

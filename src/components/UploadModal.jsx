@@ -182,6 +182,16 @@ export default function UploadModal({ isOpen, onClose }) {
                                         </motion.div>
                                         <h4 className="text-xl font-display font-bold text-white">Record Secured</h4>
                                         <p className="text-sm text-[#8899AA] mt-2 max-w-xs mx-auto">Local cryptographic envelope locked. File safely broadcasted to Firebase & blockchain registers.</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                reset();
+                                                onClose();
+                                            }}
+                                            className="mt-6 px-6 py-2.5 rounded-xl bg-[#00C8D4] hover:bg-[#00E5F0] text-[#0B0F1A] font-bold text-xs shadow-[0_0_20px_rgba(0,200,212,0.3)] transition-all cursor-pointer inline-flex items-center gap-2"
+                                        >
+                                            <CheckCircle className="w-4 h-4" /> View in Medical Records
+                                        </button>
                                     </motion.div>
                                 ) : (
                                     <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">

@@ -27,8 +27,19 @@ export const auth = {
 export const db = {};
 export const storage = {};
 
+export const initializeApp = (config) => ({
+    name: '[DEFAULT]',
+    options: config || {}
+});
+
+export const getApps = () => [{ name: '[DEFAULT]' }];
+export const getApp = () => ({ name: '[DEFAULT]' });
+
 export default {
     auth,
     db,
-    storage
+    storage,
+    initializeApp,
+    getApps,
+    getApp
 };

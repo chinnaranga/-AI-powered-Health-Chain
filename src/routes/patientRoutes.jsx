@@ -22,6 +22,8 @@ const VaccinationImmunizationPage = lazy(() => import('../pages/subpages/Vaccina
 const VitalSignsTrendsPage = lazy(() => import('../pages/subpages/VitalSignsTrendsPage'));
 const WearablesMonitoringPage = lazy(() => import('../pages/subpages/WearablesMonitoringPage'));
 const SupportHelpCenterPage = lazy(() => import('../pages/subpages/SupportHelpCenterPage'));
+const AIChat = lazy(() => import('../pages/ai/AIChat'));
+const AIMedicalSummaryPage = lazy(() => import('../pages/subpages/AIMedicalSummaryPage'));
 
 export const patientRoutes = [
     // Canonical Patient Route Group
@@ -30,10 +32,16 @@ export const patientRoutes = [
         <Route path="dashboard" element={<PatientDashboard />} />
         <Route path="profile" element={<ProfileIdentityPage />} />
         <Route path="records" element={<RecordsPage />} />
+        <Route path="medical-records" element={<RecordsPage />} />
         <Route path="records/:id" element={<PatientRecordViewer />} />
         <Route path="appointments" element={<AppointmentSchedulingPage />} />
         <Route path="prescriptions" element={<PrescriptionManagementPage />} />
         <Route path="lab-reports" element={<LabImagingResultsPage defaultTab="lab" />} />
+        <Route path="lab-results" element={<LabImagingResultsPage defaultTab="lab" />} />
+        <Route path="ai-assistant" element={<AIChat />} />
+        <Route path="ai" element={<AIChat />} />
+        <Route path="ai-chat" element={<AIChat />} />
+        <Route path="ai-summary" element={<AIMedicalSummaryPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="security" element={<SecuritySettingsPage />} />
         <Route path="access-control" element={<AccessControlPage />} />

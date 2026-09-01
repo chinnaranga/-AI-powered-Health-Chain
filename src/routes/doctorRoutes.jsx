@@ -13,12 +13,17 @@ const DoctorSettingsPage = lazy(() => import('../pages/subpages/DoctorSettingsPa
 const DoctorOnboarding = lazy(() => import('../pages/DoctorOnboarding'));
 const ProfileIdentityPage = lazy(() => import('../pages/subpages/ProfileIdentityPage'));
 const SecuritySettingsPage = lazy(() => import('../pages/subpages/SecuritySettingsPage'));
+const AIChat = lazy(() => import('../pages/ai/AIChat'));
+const AIMedicalSummaryPage = lazy(() => import('../pages/subpages/AIMedicalSummaryPage'));
 
 export const doctorRoutes = [
     // Canonical Doctor Route Group
     <Route key="doctor-root" path="/doctor" element={<DashboardLayout basePath="/doctor" />}>
         <Route index element={<Navigate to="/doctor/dashboard" replace />} />
         <Route path="dashboard" element={<DoctorDashboard />} />
+        <Route path="ai" element={<AIChat />} />
+        <Route path="ai-assistant" element={<AIChat />} />
+        <Route path="ai-summary" element={<AIMedicalSummaryPage />} />
         <Route path="profile" element={<ProfileIdentityPage />} />
         <Route path="patient-records" element={<DoctorRecordsPage />} />
         <Route path="records" element={<DoctorRecordsPage />} />

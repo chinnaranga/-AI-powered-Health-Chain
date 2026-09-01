@@ -50,7 +50,22 @@ export default function Topbar({ onMenuClick }) {
         return () => unsubFirestore();
     }, [targetUid]);
 
-    const activeName = realtimeUser?.fullName || realtimeUser?.name || firebaseUser?.displayName || storeUser?.fullName || storeUser?.name || (role === 'doctor' ? 'Dr. Medical Staff' : role === 'clinical' ? 'Clinical Officer' : 'HealthChain Patient');
+    const savedProfile = (() => {
+        try {
+            const raw = localStorage.getItem('hc_patient_profile');
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    })();
+
+    const resolvedName = savedProfile?.displayName || savedProfile?.name || realtimeUser?.fullName || realtimeUser?.name || firebaseUser?.displayName || storeUser?.fullName || storeUser?.name || storeUser?.displayName;
+    const resolvedPhone = savedProfile?.phoneNumber || storeUser?.phoneNumber || storeUser?.phone;
+    const resolvedEmail = savedProfile?.email || (storeUser?.email && !storeUser.email.includes('user@hospital.org') ? storeUser.email : '');
+
+    const activeName = (resolvedName && resolvedName !== 'USER') 
+        ? resolvedName 
+        : (resolvedPhone || resolvedEmail || (role === 'doctor' ? 'Medical Staff' : role === 'clinical' ? 'Clinical Staff' : 'Patient'));
     const activeRole = (realtimeUser?.role || role || storeUser?.role || 'patient').toUpperCase();
 
     const formatTime = (seconds) => {
@@ -70,9 +85,9 @@ export default function Topbar({ onMenuClick }) {
     ];
     const unreadCount = notifications.filter(n => !n.read).length;
 
-    const initials = activeName
-        ? activeName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-        : 'HC';
+    const initials = (resolvedName && resolvedName !== 'USER')
+        ? resolvedName.trim().split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+        : (resolvedPhone ? resolvedPhone.slice(-2) : 'P');
 
     const handleViewProfile = () => {
         setShowProfileMenu(false);

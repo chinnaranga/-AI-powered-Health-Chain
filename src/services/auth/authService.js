@@ -57,12 +57,17 @@ export async function getSessionUser() {
             }
         });
 
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('text/html') || !res.ok) {
+            return null;
+        }
+
         const data = await res.json();
-        if (res.ok && data.success) {
+        if (data && data.success) {
             return data.user;
         }
     } catch (err) {
-        console.warn('[Cloudflare Auth Session Notice]', err.message);
+        // Silently fallback without noisy parse errors on static hosting
     }
     return null;
 }

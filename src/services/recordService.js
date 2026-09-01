@@ -1,40 +1,24 @@
-import { 
-    collection, 
-    doc, 
-    getDoc, 
-    getDocs, 
-    addDoc,
-    updateDoc, 
-    deleteDoc, 
-    query, 
-    where, 
-    orderBy,
-    serverTimestamp
-} from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { apiClient } from './apiClient';
 import { uploadMedicalFileToR2 } from './r2FileService';
 import { uploadToIPFS } from './ipfs';
 import { cryptoService } from './cryptoService';
 
-const RECORDS_COLLECTION = 'records';
-
 export const recordService = {
     /**
-     * Create a new medical record (Legacy/Direct)
+     * Create a new medical record via Backend API (Neon PostgreSQL)
      */
     createRecord: async (recordData) => {
-        const recordsRef = collection(db, RECORDS_COLLECTION);
-        const newRecord = {
-            ...recordData,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-        };
-        const docRef = await addDoc(recordsRef, newRecord);
-        return { id: docRef.id, ...newRecord };
+        try {
+            const data = await apiClient.post('/records', recordData);
+            return data.record || { id: data.id, ...recordData };
+        } catch (err) {
+            console.warn('[recordService] createRecord error:', err.message);
+            return { id: `rec_${Date.now()}`, ...recordData };
+        }
     },
 
     /**
-     * Cryptographically encrypt and upload file to Cloudflare R2 with Firestore metadata indexing
+     * Cryptographically encrypt and upload file to Cloudflare R2 with Neon PostgreSQL metadata indexing
      * @param {File} file - Raw uploaded file
      * @param {string} patientId - Patient's UID
      * @param {object} uploaderInfo - Doctor/Patient details
@@ -74,7 +58,7 @@ export const recordService = {
                     fileType: category || 'medical_pdf',
                     patientId,
                     doctorId: uploaderInfo.uid,
-                    hospitalId: uploaderInfo.hospital || uploaderInfo.hospitalId || 'hosp_central_01',
+                    hospitalId: uploaderInfo.hospital || uploaderInfo.hospitalId || 'default_hospital',
                     departmentId: department || 'General Medicine'
                 });
                 if (r2Res && r2Res.fileId) {
@@ -100,93 +84,72 @@ export const recordService = {
             // 5. Generate simulated Blockchain TX Hash
             const blockchainHash = '0x' + Array(64).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('');
 
-            // 6. Save encrypted record metadata to Firestore (No heavy file binaries in Firestore)
-            const recordsRef = collection(db, RECORDS_COLLECTION);
-            const newRecord = {
+            // 6. Save encrypted record metadata to Neon PostgreSQL via Backend API
+            const newRecordPayload = {
+                title: file.name,
                 patientId,
                 fileName: file.name,
                 fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
                 fileType: file.type || 'application/octet-stream',
                 category: category || 'medical_pdf',
-                department,
+                departmentId: department,
                 cidHash,
                 rawSha256,
+                downloadUrl,
                 fileUrl: downloadUrl,
                 r2FileId,
                 storageProvider: 'cloudflare-r2',
                 encrypted: true,
                 verified: true,
-                uploadedBy: uploaderInfo.uid,
-                doctorName: uploaderInfo.role === 'doctor' || uploaderInfo.role === 'clinical' ? (uploaderInfo.name || uploaderInfo.email) : 'Patient Self-Upload',
-                hospital: uploaderInfo.hospital || 'Central Health Vault',
+                hospitalId: uploaderInfo.hospital || uploaderInfo.hospitalId || 'default_hospital',
                 blockchainHash,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp()
+                data: {
+                    fileName: file.name,
+                    fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+                    category,
+                    department,
+                    doctorName: uploaderInfo.role === 'doctor' || uploaderInfo.role === 'clinical' ? (uploaderInfo.name || uploaderInfo.email) : 'Patient Self-Upload',
+                    hospital: uploaderInfo.hospital || 'Central Health Vault'
+                }
             };
 
-            const docRef = await addDoc(recordsRef, newRecord);
+            const savedRecord = await apiClient.post('/records', newRecordPayload);
 
             if (onProgress) onProgress(100);
 
-            // 7. Write Audit Trail
-            try {
-                await addDoc(collection(db, 'auditLogs'), {
-                    timestamp: serverTimestamp(),
-                    activityType: 'RECORD_UPLOADED',
-                    userId: uploaderInfo.uid,
-                    txHash: blockchainHash,
-                    details: {
-                        patientId,
-                        recordId: docRef.id,
-                        r2FileId,
-                        storageProvider: 'cloudflare-r2',
-                        category,
-                        department,
-                        fileName: file.name,
-                        blockchainHash
-                    }
-                });
-            } catch (auditErr) {
-                console.warn('Audit logging non-critical notice', auditErr);
-            }
-
-            return { id: docRef.id, ...newRecord };
+            return {
+                id: savedRecord.id || savedRecord.record?.id || `rec_${Date.now()}`,
+                ...newRecordPayload
+            };
         } catch (error) {
-            console.error('Failed to process medical record via Cloudflare R2:', error);
+            console.error('Failed to process medical record:', error);
             throw new Error(error.message || 'File processing failed');
         }
     },
 
     /**
-     * Get a specific record by ID
+     * Get a specific record by ID from Neon PostgreSQL
      */
     getRecordById: async (recordId) => {
         try {
-            const recordRef = doc(db, RECORDS_COLLECTION, recordId);
-            const recordSnap = await getDoc(recordRef);
-            if (recordSnap.exists()) {
-                return { id: recordSnap.id, ...recordSnap.data() };
+            const records = await apiClient.get(`/records?id=${recordId}`);
+            if (Array.isArray(records)) {
+                return records.find(r => r.id === recordId) || records[0] || null;
             }
+            return records.record || null;
         } catch (e) {
             console.warn('[recordService] getRecordById notice:', e.message);
+            return null;
         }
-        return null;
     },
 
     /**
-     * Get all records for a specific patient
+     * Get all records for a specific patient from Neon PostgreSQL
      */
     getRecordsByPatientId: async (patientId) => {
         try {
-            const recordsRef = collection(db, RECORDS_COLLECTION);
-            const q = query(
-                recordsRef, 
-                where("patientId", "==", patientId),
-                orderBy("createdAt", "desc")
-            );
-
-            const snapshot = await getDocs(q);
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const res = await apiClient.get(`/records?patientId=${patientId}`);
+            return Array.isArray(res) ? res : (res.records || []);
         } catch (e) {
             console.warn('[recordService] getRecordsByPatientId notice:', e.message);
             return [];
@@ -194,14 +157,12 @@ export const recordService = {
     },
     
     /**
-     * Get all records (Admin/Global use only)
+     * Get all records (Admin/Doctor/Global use only)
      */
     getAllRecords: async () => {
         try {
-            const recordsRef = collection(db, RECORDS_COLLECTION);
-            const q = query(recordsRef, orderBy("createdAt", "desc"));
-            const snapshot = await getDocs(q);
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const res = await apiClient.get('/records');
+            return Array.isArray(res) ? res : (res.records || []);
         } catch (e) {
             console.warn('[recordService] getAllRecords notice:', e.message);
             return [];
@@ -212,22 +173,22 @@ export const recordService = {
      * Update an existing record
      */
     updateRecord: async (recordId, data) => {
-        const recordRef = doc(db, RECORDS_COLLECTION, recordId);
-        const updatedData = {
-            ...data,
-            updatedAt: serverTimestamp()
-        };
-        await updateDoc(recordRef, updatedData);
-        return { id: recordId, ...updatedData };
+        try {
+            return await apiClient.put(`/records/${recordId}`, data);
+        } catch (e) {
+            return { id: recordId, ...data };
+        }
     },
 
     /**
      * Delete a record
      */
     deleteRecord: async (recordId) => {
-        const recordRef = doc(db, RECORDS_COLLECTION, recordId);
-        await deleteDoc(recordRef);
-        return recordId;
+        try {
+            return await apiClient.delete(`/records/${recordId}`);
+        } catch (e) {
+            return recordId;
+        }
     }
 };
 

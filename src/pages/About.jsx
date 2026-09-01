@@ -5,7 +5,7 @@ import {
   Shield, KeyRound, Database, Globe, Layers, Stethoscope,
   Building2, TestTube, Users, ArrowRight, CheckCircle2, Lock,
   FileCheck2, Server, Activity, Share2, Sparkles, Binary,
-  Eye, HeartPulse, HeartHandshake, Compass, Cpu, Code2
+  Eye, HeartPulse, HeartHandshake, Compass, Cpu, Code2, ChevronRight
 } from 'lucide-react';
 import Header from '../components/landing/Header';
 import Footer from '../components/landing/Footer';

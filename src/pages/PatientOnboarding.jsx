@@ -22,29 +22,40 @@ export default function PatientOnboarding() {
     const [showSuccessModal, setShowSuccessModal] = useState(false);
 
     // Form data
+    const initialSavedProfile = (() => {
+        try {
+            const raw = localStorage.getItem('hc_patient_profile');
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    })();
+    const initialStoredPhone = localStorage.getItem('hc_phone') || '';
+    const initialStoredEmail = localStorage.getItem('hc_email') || '';
+    const initialStoredName = localStorage.getItem('hc_name') || '';
+    const initialUser = useAuthStore.getState().user || user || {};
+
     const [formData, setFormData] = useState({
-        fullName: '',
-        dob: '',
-        gender: 'Male',
-        phone: '',
-        email: '',
+        fullName: initialSavedProfile?.displayName || initialSavedProfile?.name || initialSavedProfile?.fullName || initialUser?.displayName || (initialUser?.name && initialUser.name !== 'USER' ? initialUser.name : '') || initialStoredName || '',
+        dob: initialSavedProfile?.dob || initialUser?.dob || '',
+        gender: initialSavedProfile?.gender || initialUser?.gender || 'Male',
+        phone: initialSavedProfile?.phoneNumber || initialSavedProfile?.phone || initialUser?.phoneNumber || initialUser?.phone || initialStoredPhone || '',
+        email: initialSavedProfile?.email || (initialUser?.email && !initialUser.email.includes('user@hospital.org') && !initialUser.email.includes('user@healthchain.io') ? initialUser.email : '') || initialStoredEmail || '',
         aadhaarInput: '',
         aadhaarVerified: false,
-        abhaId: '',
+        abhaId: initialSavedProfile?.abhaId || initialUser?.abhaId || '',
         abhaLinked: false,
-        bloodGroup: 'A+',
-        allergies: [],
-        chronicConditions: [],
-        medications: [],
-        emergencyContactName: '',
-        emergencyContactPhone: '',
-        relationship: 'Spouse',
-        primaryHospital: '',
-        assignedDoctor: '',
-        insuranceDetails: '',
+        bloodGroup: initialSavedProfile?.bloodGroup || initialUser?.bloodGroup || 'A+',
+        allergies: initialSavedProfile?.allergies || [],
+        chronicConditions: initialSavedProfile?.chronicConditions || [],
+        medications: initialSavedProfile?.medications || [],
+        emergencyContactName: initialSavedProfile?.emergencyContactName || '',
+        emergencyContactPhone: initialSavedProfile?.emergencyContactPhone || '',
+        relationship: initialSavedProfile?.relationship || 'Spouse',
+        primaryHospital: initialSavedProfile?.primaryHospital || '',
+        assignedDoctor: initialSavedProfile?.assignedDoctor || '',
+        insuranceDetails: initialSavedProfile?.insuranceDetails || '',
         notes: '',
-        patientId: '',
-        globalPatientId: ''
+        patientId: initialSavedProfile?.patientId || '',
+        globalPatientId: initialSavedProfile?.globalPatientId || ''
     });
 
     // Tag helper inputs
@@ -59,71 +70,67 @@ export default function PatientOnboarding() {
     // Fetch and pre-fill existing user profile details
     useEffect(() => {
         const fetchProfile = async () => {
-            if (!user?.uid) return;
             setIsLoadingProfile(true);
             try {
-                let data = null;
-                
-                try {
-                    const docRef = doc(db, 'users', user.uid);
-                    const docSnap = await getDoc(docRef);
-                    if (docSnap.exists()) {
-                        data = docSnap.data();
-                    }
-                } catch (fsErr) {
-                    console.warn('[Onboarding] Firestore profile lookup skipped (using session profile):', fsErr.message);
-                }
-
-                if ((!data || !data.patientId) && (data?.email || user.email)) {
+                const savedProfile = (() => {
                     try {
-                        const targetEmail = data?.email || user.email;
-                        const patientsRef = collection(db, 'patients');
-                        const q = query(patientsRef, where('email', '==', targetEmail));
-                        const querySnap = await getDocs(q);
-                        if (!querySnap.empty) {
-                            const patientData = querySnap.docs[0].data();
-                            data = {
-                                ...data,
-                                ...patientData
-                            };
+                        const raw = localStorage.getItem('hc_patient_profile');
+                        return raw ? JSON.parse(raw) : null;
+                    } catch (e) { return null; }
+                })();
+
+                const storedPhone = localStorage.getItem('hc_phone') || '';
+                const storedEmail = localStorage.getItem('hc_email') || '';
+                const storedName = localStorage.getItem('hc_name') || '';
+
+                const currentUser = useAuthStore.getState().user || user || {};
+
+                const realFullName = savedProfile?.displayName || savedProfile?.name || savedProfile?.fullName || currentUser?.displayName || currentUser?.name || currentUser?.fullName || storedName || '';
+                const realEmail = savedProfile?.email || (currentUser?.email && !currentUser.email.includes('user@hospital.org') ? currentUser.email : '') || storedEmail || '';
+                const realPhone = savedProfile?.phoneNumber || savedProfile?.phone || currentUser?.phoneNumber || currentUser?.phone || storedPhone || '';
+                const realDob = savedProfile?.dob || currentUser?.dob || '';
+                const realGender = savedProfile?.gender || currentUser?.gender || 'Male';
+                const realBlood = savedProfile?.bloodGroup || currentUser?.bloodGroup || 'A+';
+                const realAbha = savedProfile?.abhaId || currentUser?.abhaId || '';
+
+                let data = null;
+                if (currentUser?.uid) {
+                    try {
+                        const docRef = doc(db, 'users', currentUser.uid);
+                        const docSnap = await getDoc(docRef);
+                        if (docSnap.exists()) {
+                            data = docSnap.data();
                         }
-                    } catch (patientFetchErr) {}
+                    } catch (fsErr) {
+                        console.warn('[Onboarding] Firestore profile lookup notice:', fsErr.message);
+                    }
                 }
 
-                if (data) {
-                    setFormData(prev => ({
-                        ...prev,
-                        fullName: data.fullName || data.displayName || user.displayName || user.name || '',
-                        email: data.email || user.email || '',
-                        phone: data.phone || user.phoneNumber || '',
-                        dob: data.dob || '',
-                        gender: data.gender || 'Male',
-                        bloodGroup: data.bloodGroup || 'A+',
-                        allergies: data.allergies || [],
-                        chronicConditions: data.chronicConditions || [],
-                        medications: data.medications || [],
-                        emergencyContactName: data.emergencyContactName || data.emergencyContact || '',
-                        emergencyContactPhone: data.emergencyContactPhone || '',
-                        relationship: data.relationship || 'Spouse',
-                        primaryHospital: data.primaryHospital || '',
-                        assignedDoctor: data.assignedDoctor || '',
-                        insuranceDetails: data.insuranceDetails || '',
-                        notes: data.notes || '',
-                        patientId: data.patientId || '',
-                        globalPatientId: data.globalPatientId || '',
-                        abhaId: data.abhaId || '',
-                        abhaLinked: data.abhaLinked || false,
-                        aadhaarVerified: data.aadhaarVerified || false,
-                        aadhaarInput: data.aadhaarMasked ? 'XXXX-XXXX-XXXX' : ''
-                    }));
-                } else {
-                    setFormData(prev => ({
-                        ...prev,
-                        fullName: user.displayName || user.name || user.fullName || '',
-                        email: user.email || '',
-                        phone: user.phoneNumber || user.phone || ''
-                    }));
-                }
+                setFormData(prev => ({
+                    ...prev,
+                    fullName: data?.fullName || data?.displayName || realFullName,
+                    email: data?.email || realEmail,
+                    phone: data?.phone || realPhone,
+                    dob: data?.dob || realDob,
+                    gender: data?.gender || realGender,
+                    bloodGroup: data?.bloodGroup || realBlood,
+                    allergies: data?.allergies || savedProfile?.allergies || [],
+                    chronicConditions: data?.chronicConditions || savedProfile?.chronicConditions || [],
+                    medications: data?.medications || savedProfile?.medications || [],
+                    emergencyContactName: data?.emergencyContactName || savedProfile?.emergencyContactName || '',
+                    emergencyContactPhone: data?.emergencyContactPhone || savedProfile?.emergencyContactPhone || '',
+                    relationship: data?.relationship || savedProfile?.relationship || 'Spouse',
+                    primaryHospital: data?.primaryHospital || savedProfile?.primaryHospital || '',
+                    assignedDoctor: data?.assignedDoctor || savedProfile?.assignedDoctor || '',
+                    insuranceDetails: data?.insuranceDetails || savedProfile?.insuranceDetails || '',
+                    notes: data?.notes || savedProfile?.notes || '',
+                    patientId: data?.patientId || savedProfile?.patientId || '',
+                    globalPatientId: data?.globalPatientId || savedProfile?.globalPatientId || '',
+                    abhaId: data?.abhaId || realAbha,
+                    abhaLinked: !!(data?.abhaLinked || savedProfile?.abhaLinked || realAbha),
+                    aadhaarVerified: !!(data?.aadhaarVerified || savedProfile?.aadhaarVerified),
+                    aadhaarInput: data?.aadhaarMasked || (savedProfile?.aadhaarMasked ? 'XXXX-XXXX-XXXX' : '')
+                }));
             } catch (err) {
                 console.warn('[Onboarding] Profile load notice:', err.message);
             } finally {
@@ -395,18 +402,40 @@ export default function PatientOnboarding() {
                 console.warn('Failed to synchronize with patients collection:', syncErr);
             }
 
-            // Commit audit log entry
-            const auditLogsRef = collection(db, 'auditLogs');
-            await setDoc(doc(auditLogsRef), {
-                userId: user.uid,
-                activityType: 'ONBOARDING_COMPLETED',
-                actorName: formData.fullName,
-                timestamp: serverTimestamp(),
-                details: `Patient identity verification workflow completed. UID ${pId} generated.`
-            });
+            // Save to local storage cache for instant profile sync across all dashboard views
+            const profileCache = {
+                displayName: formData.fullName,
+                name: formData.fullName,
+                fullName: formData.fullName,
+                phoneNumber: formData.phone,
+                phone: formData.phone,
+                abhaId: formData.abhaId,
+                email: formData.email,
+                gender: formData.gender,
+                dob: formData.dob,
+                bloodGroup: formData.bloodGroup,
+                globalPatientId: gId,
+                patientId: pId,
+                allergies: formData.allergies,
+                chronicConditions: formData.chronicConditions,
+                medications: formData.medications,
+                emergencyContactName: formData.emergencyContactName,
+                emergencyContactPhone: formData.emergencyContactPhone,
+                relationship: formData.relationship,
+                primaryHospital: formData.primaryHospital,
+                assignedDoctor: formData.assignedDoctor,
+                insuranceDetails: formData.insuranceDetails,
+                isVerified: true,
+                profileComplete: true,
+                onboardingComplete: true
+            };
+            localStorage.setItem('hc_patient_profile', JSON.stringify(profileCache));
+            if (formData.phone) localStorage.setItem('hc_phone', formData.phone);
+            if (formData.email) localStorage.setItem('hc_email', formData.email);
+            if (formData.fullName) localStorage.setItem('hc_name', formData.fullName);
 
             // Update local AuthStore state with new data
-            await setFirebaseUser(finalPayload, 'patient');
+            await setFirebaseUser({ ...finalPayload, ...profileCache }, 'patient');
 
             // Send Firebase email verification immediately after onboarding completion
             if (auth.currentUser && !auth.currentUser.emailVerified) {
@@ -540,11 +569,11 @@ export default function PatientOnboarding() {
                             <label className="block text-xs font-bold text-[#8899AA] uppercase tracking-wider mb-1.5">Email Address *</label>
                             <input
                                 type="email"
-                                disabled
                                 value={formData.email}
-                                className="w-full bg-slate-900 border border-[#1E2D4530] text-slate-500 rounded-xl px-4 py-2.5 text-sm cursor-not-allowed"
+                                onChange={e => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                                placeholder="name@example.com"
+                                className="w-full bg-[#0B0F1A] border border-[#1E2D4580] rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#00C8D4]"
                             />
-                            <span className="text-[10px] text-slate-500 font-mono mt-1 block">Email binding is linked directly to your authenticated Google account.</span>
                         </div>
                     </div>
                 </div>

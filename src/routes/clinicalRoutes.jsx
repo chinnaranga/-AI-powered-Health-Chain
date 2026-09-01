@@ -10,14 +10,20 @@ const CreatePatient = lazy(() => import('../pages/clinical/CreatePatient'));
 const ClinicalSettingsPage = lazy(() => import('../pages/clinical/ClinicalSettingsPage'));
 const ClinicalLogsPage = lazy(() => import('../pages/clinical/ClinicalLogsPage'));
 const ClinicalAnalyticsPage = lazy(() => import('../pages/clinical/ClinicalAnalyticsPage'));
+const AIChat = lazy(() => import('../pages/ai/AIChat'));
+const AIMedicalSummaryPage = lazy(() => import('../pages/subpages/AIMedicalSummaryPage'));
 
 export const clinicalRoutes = [
     // Canonical Clinical Staff Route Group
     <Route key="clinical-root" path="/clinical" element={<DashboardLayout basePath="/clinical" />}>
         <Route index element={<Navigate to="/clinical/dashboard" replace />} />
         <Route path="dashboard" element={<ClinicalDashboard />} />
+        <Route path="ai" element={<AIChat />} />
+        <Route path="ai-assistant" element={<AIChat />} />
+        <Route path="ai-summary" element={<AIMedicalSummaryPage />} />
         <Route path="requests" element={<ClinicalRequestPage />} />
         <Route path="viewer" element={<ClinicalViewer />} />
+        <Route path="records" element={<ClinicalViewer />} />
         <Route path="patients" element={<ClinicalPatientProfile />} />
         <Route path="patients/create" element={<CreatePatient />} />
         <Route path="create-patient" element={<CreatePatient />} />

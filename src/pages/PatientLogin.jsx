@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Shield, Activity, Lock, Mail, Key, ArrowRight, CheckCircle2, AlertCircle, ChevronDown } from 'lucide-react';
+import { Loader2, Shield, Activity, Lock, Mail, Key, ArrowRight, CheckCircle2, AlertCircle, ChevronDown, User, X } from 'lucide-react';
 import useAuthStore from '../store/authStore';
 import { toast } from '../components/Toast';
 import ParticleBackground from '../components/homepage/ParticleBackground';
@@ -63,9 +63,26 @@ export default function PatientLogin() {
             }
             setLoading(true);
             try {
-                await login(email, password, 'patient');
-                toast.success('Successfully logged in');
-                navigate('/dashboard/patient');
+                localStorage.setItem('hc_email', email);
+                const res = await login(email, password, 'patient');
+                const user = res?.user || useAuthStore.getState().user;
+                
+                const savedProfile = (() => {
+                    try {
+                        const raw = localStorage.getItem('hc_patient_profile');
+                        return raw ? JSON.parse(raw) : null;
+                    } catch (e) { return null; }
+                })();
+
+                const isCompleted = user?.onboardingComplete || savedProfile?.onboardingComplete || savedProfile?.dob;
+
+                if (!isCompleted) {
+                    toast.success('Welcome! Please complete your patient onboarding.');
+                    navigate('/patient/onboarding');
+                } else {
+                    toast.success('Successfully logged in');
+                    navigate('/patient/dashboard');
+                }
             } catch (err) {
                 if (err.message?.startsWith('ROLE_MISMATCH:')) {
                     const storedRole = err.message.split(':')[1];
@@ -92,6 +109,7 @@ export default function PatientLogin() {
                 }
                 
                 const fullPhone = `${selectedCountry.dial}${phone}`;
+                localStorage.setItem('hc_phone', fullPhone);
                 const { loginPhone } = useAuthStore.getState();
                 const confirmation = await loginPhone(fullPhone, recaptchaVerifier);
                 
@@ -118,10 +136,28 @@ export default function PatientLogin() {
         setError('');
 
         try {
+            const fullPhone = `${selectedCountry.dial}${phone}`;
+            localStorage.setItem('hc_phone', fullPhone);
             const { verifyPhoneOtp } = useAuthStore.getState();
-            await verifyPhoneOtp(confirmationResult, code, 'patient');
-            toast.success('Successfully logged in');
-            navigate('/dashboard/patient');
+            const res = await verifyPhoneOtp(confirmationResult || { phoneNumber: fullPhone }, code, 'patient');
+            const user = res?.user || useAuthStore.getState().user;
+
+            const savedProfile = (() => {
+                try {
+                    const raw = localStorage.getItem('hc_patient_profile');
+                    return raw ? JSON.parse(raw) : null;
+                } catch (e) { return null; }
+            })();
+
+            const isCompleted = user?.onboardingComplete || savedProfile?.onboardingComplete || savedProfile?.dob;
+
+            if (!isCompleted) {
+                toast.success('Welcome! Please complete your patient onboarding.');
+                navigate('/patient/onboarding');
+            } else {
+                toast.success('Successfully logged in');
+                navigate('/patient/dashboard');
+            }
         } catch (err) {
             if (err.message?.startsWith('ROLE_MISMATCH:')) {
                 const storedRole = err.message.split(':')[1];
@@ -139,9 +175,43 @@ export default function PatientLogin() {
         try {
             setIsGoogleLoading(true);
             setError('');
-            await loginGoogle('patient');
-            toast.success('Successfully logged in');
-            navigate('/dashboard/patient');
+            
+            const { GoogleAuthProvider, signInWithPopup } = await import('firebase/auth');
+            const { auth } = await import('../firebase/config');
+            const provider = new GoogleAuthProvider();
+            provider.setCustomParameters({ prompt: 'select_account' });
+            const result = await signInWithPopup(auth, provider);
+            const googleUser = result?.user;
+
+            if (googleUser?.email) {
+                localStorage.setItem('hc_email', googleUser.email);
+            }
+            if (googleUser?.displayName) {
+                localStorage.setItem('hc_name', googleUser.displayName);
+            }
+            if (googleUser?.photoURL) {
+                localStorage.setItem('hc_photo', googleUser.photoURL);
+            }
+
+            const res = await loginGoogle('patient', googleUser);
+            const user = res?.user || useAuthStore.getState().user;
+
+            const savedProfile = (() => {
+                try {
+                    const raw = localStorage.getItem('hc_patient_profile');
+                    return raw ? JSON.parse(raw) : null;
+                } catch (e) { return null; }
+            })();
+
+            const isCompleted = !!(user?.onboardingComplete || savedProfile?.onboardingComplete || savedProfile?.dob);
+
+            if (!isCompleted) {
+                toast.success(`Welcome, ${googleUser?.displayName?.split(' ')[0] || 'Patient'}! Please complete your onboarding profile.`);
+                navigate('/patient/onboarding');
+            } else {
+                toast.success('Successfully logged in with Google');
+                navigate('/patient/dashboard');
+            }
         } catch (err) {
             if (err.message?.startsWith('ROLE_MISMATCH:')) {
                 const storedRole = err.message.split(':')[1];

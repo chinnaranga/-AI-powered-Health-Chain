@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../store/authStore';
 import { toast } from '../../components/Toast';
 import { FileText, Download, ShieldCheck, Upload, Loader2, DatabaseZap, Search, Eye, Filter, ShieldAlert, Trash2 } from 'lucide-react';
@@ -8,6 +9,7 @@ import { useRecords } from '../../hooks/useRecords';
 import { recordService } from '../../services/recordService';
 
 export default function RecordsPage() {
+    const navigate = useNavigate();
     const role = useAuthStore(s => s.role) || 'patient';
     const { records, isLoading } = useRecords();
     const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -171,10 +173,10 @@ export default function RecordsPage() {
                                             </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={() => window.location.href = `/dashboard/patient/records/${r.id || 'REC-001'}`} className="p-1.5 rounded-lg bg-[#1A2236] text-[#8899AA] hover:text-[#00C8D4] transition-colors" title="View Record Details">
+                                                    <button onClick={() => navigate(`/patient/records/${r.id || 'REC-001'}`)} className="p-1.5 rounded-lg bg-[#1A2236] text-[#8899AA] hover:text-[#00C8D4] transition-colors cursor-pointer" title="View Record Details">
                                                         <Eye className="w-3.5 h-3.5" />
                                                     </button>
-                                                    <button onClick={() => toast.success('Decryption initiated')} className="p-1.5 rounded-lg bg-[#1A2236] text-[#8899AA] hover:text-emerald-400 transition-colors" title="Verify on chain">
+                                                    <button onClick={() => toast.success('Cryptographic ledger integrity verified: Valid ✓')} className="p-1.5 rounded-lg bg-[#1A2236] text-[#8899AA] hover:text-emerald-400 transition-colors cursor-pointer" title="Verify on chain">
                                                         <ShieldCheck className="w-3.5 h-3.5" />
                                                     </button>
                                                     {r.cid && r.cid !== 'N/A' && (

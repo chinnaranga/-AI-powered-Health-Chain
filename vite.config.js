@@ -9,6 +9,10 @@ const __dirname = path.dirname(__filename)
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  esbuild: {
+    legalComments: 'none',
+    drop: ['debugger']
+  },
   optimizeDeps: {
     include: [
       'react',
@@ -21,10 +25,13 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
-    chunkSizeWarningLimit: 1500,
+    chunkSizeWarningLimit: 2500,
     minify: 'esbuild',
+    cssMinify: 'esbuild',
     sourcemap: false,
     cssCodeSplit: true,
+    reportCompressedSize: false, // Drastically accelerates build time by skipping slow gzip size recalculation
+    emptyOutDir: true,
     rollupOptions: {
       output: {
         manualChunks(id) {

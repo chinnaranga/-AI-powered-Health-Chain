@@ -161,7 +161,7 @@ export default function PatientRegister() {
             await register(payload);
             setShowSuccess(true);
             toast.success('Patient account initialized. Proceeding to onboarding...');
-            setTimeout(() => navigate('/onboarding', { replace: true }), 1500);
+            setTimeout(() => navigate('/patient/onboarding', { replace: true }), 1500);
         } catch (err) {
             toast.error(err.message || 'Registration failed');
         }
@@ -170,6 +170,7 @@ export default function PatientRegister() {
     const handleGoogleRegister = async () => {
         try {
             const provider = new GoogleAuthProvider();
+            provider.setCustomParameters({ prompt: 'select_account' });
             const result = await signInWithPopup(auth, provider);
             const user = result.user;
 
@@ -197,10 +198,13 @@ export default function PatientRegister() {
 
             localStorage.setItem('hc_token', data.token);
             localStorage.setItem('hc_role', data.role);
+            if (user.displayName) localStorage.setItem('hc_name', user.displayName);
+            if (user.email) localStorage.setItem('hc_email', user.email);
+            if (user.photoURL) localStorage.setItem('hc_photo', user.photoURL);
             if (data.walletAddress) localStorage.setItem('hc_wallet', data.walletAddress);
             
-            toast.success(`Patient account created for ${user.displayName?.split(' ')[0] || 'you'}!`);
-            navigate('/dashboard/patient');
+            toast.success(`Patient account created for ${user.displayName?.split(' ')[0] || 'you'}! Welcome to onboarding.`);
+            navigate('/patient/onboarding');
         } catch (err) {
             console.error(err);
             if (err.code !== 'auth/popup-closed-by-user') {

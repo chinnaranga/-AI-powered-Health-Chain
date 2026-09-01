@@ -79,6 +79,7 @@ export const publicRoutes = [
     <Route key="onboarding" path="/onboarding" element={<PatientOnboarding />} />,
     <Route key="patient-onboarding" path="/patient/onboarding" element={<PatientOnboarding />} />,
     <Route key="doctor-onboarding-public" path="/doctor/onboarding" element={<DoctorOnboarding />} />,
+    <Route key="doctor-onboarding-dash" path="/dashboard/doctor/onboarding" element={<DoctorOnboarding />} />,
     <Route key="register" path="/register" element={<><Navbar /><PatientRegister /></>} />,
     <Route key="register-patient" path="/register/patient" element={<><Navbar /><PatientRegister /></>} />,
     <Route key="patient-register" path="/patient/register" element={<><Navbar /><PatientRegister /></>} />,

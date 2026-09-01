@@ -28,7 +28,7 @@ const useAuthStore = create((set, get) => ({
 
     setCurrentUser: async (userData, savedRole) => {
         if (!userData) return;
-        const uid = userData.id || userData.uid;
+        const uid = userData.id || userData.uid || `usr_${Date.now()}`;
         let role = savedRole || userData.role || localStorage.getItem('hc_user_role') || 'patient';
         
         const fullUser = { 
@@ -36,8 +36,15 @@ const useAuthStore = create((set, get) => ({
             id: uid, 
             uid, 
             role, 
-            profileComplete: true, 
-            onboardingComplete: true 
+            name: userData.name || userData.displayName || userData.fullName || localStorage.getItem('hc_name') || '',
+            displayName: userData.displayName || userData.name || userData.fullName || localStorage.getItem('hc_name') || '',
+            fullName: userData.fullName || userData.name || userData.displayName || localStorage.getItem('hc_name') || '',
+            phoneNumber: userData.phoneNumber || userData.phone || localStorage.getItem('hc_phone') || '',
+            phone: userData.phoneNumber || userData.phone || localStorage.getItem('hc_phone') || '',
+            email: (userData.email && !userData.email.includes('user@hospital.org')) ? userData.email : (localStorage.getItem('hc_email') || ''),
+            photoURL: userData.photoURL || localStorage.getItem('hc_photo') || '',
+            profileComplete: !!(userData.profileComplete || (userData.name && (userData.email || userData.phoneNumber))), 
+            onboardingComplete: !!(userData.onboardingComplete || userData.dob) 
         };
 
         localStorage.setItem('hc_cf_jwt', userData.token || uid);
@@ -45,6 +52,11 @@ const useAuthStore = create((set, get) => ({
         localStorage.setItem('hc_user_role', role);
         localStorage.setItem('hc_role', role);
         localStorage.setItem('hc_user', JSON.stringify(fullUser));
+
+        if (fullUser.name) localStorage.setItem('hc_name', fullUser.name);
+        if (fullUser.phoneNumber) localStorage.setItem('hc_phone', fullUser.phoneNumber);
+        if (fullUser.email) localStorage.setItem('hc_email', fullUser.email);
+        if (fullUser.photoURL) localStorage.setItem('hc_photo', fullUser.photoURL);
 
         const preferredLang = userData.language || localStorage.getItem('hc_lang') || 'en';
         try {
@@ -65,17 +77,45 @@ const useAuthStore = create((set, get) => ({
         return get().setCurrentUser(userData, savedRole);
     },
 
+    // 1. Email + Password Login Flow
     login: async (email, password, requestedRole = 'patient') => {
         set({ isLoading: true, error: null });
         try {
             const data = await loginWithCloudflare(email, password);
-            const user = data.user || { id: `user_${Date.now()}`, email, role: requestedRole, name: email.split('@')[0] };
-            const uid = user.id || user.uid;
+            const user = data.user || {};
+            const uid = user.id || user.uid || `usr_${Date.now()}`;
             const targetRole = user.role || requestedRole;
-            const fullUser = { ...user, id: uid, uid, role: targetRole, profileComplete: true, onboardingComplete: true };
+
+            const savedProfile = (() => {
+                try {
+                    const raw = localStorage.getItem('hc_patient_profile');
+                    return raw ? JSON.parse(raw) : null;
+                } catch (e) { return null; }
+            })();
+
+            const fullUser = {
+                id: uid,
+                uid,
+                email: email || user.email || '',
+                name: user.name || user.displayName || savedProfile?.displayName || '',
+                displayName: user.displayName || user.name || savedProfile?.displayName || '',
+                fullName: user.fullName || user.name || savedProfile?.fullName || '',
+                phoneNumber: user.phoneNumber || user.phone || savedProfile?.phoneNumber || localStorage.getItem('hc_phone') || '',
+                phone: user.phoneNumber || user.phone || savedProfile?.phoneNumber || localStorage.getItem('hc_phone') || '',
+                dob: savedProfile?.dob || user.dob || '',
+                gender: savedProfile?.gender || user.gender || '',
+                bloodGroup: savedProfile?.bloodGroup || user.bloodGroup || '',
+                abhaId: savedProfile?.abhaId || user.abhaId || '',
+                role: targetRole,
+                loginMethod: 'email',
+                authProvider: 'password',
+                profileComplete: !!(savedProfile?.profileComplete || (user.name && email)),
+                onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
+            };
 
             localStorage.setItem('hc_cf_jwt', data.token || uid);
             localStorage.setItem('hc_token', data.token || uid);
+            localStorage.setItem('hc_email', email);
             localStorage.setItem('hc_user_role', targetRole);
             localStorage.setItem('hc_role', targetRole);
             localStorage.setItem('hc_user', JSON.stringify(fullUser));
@@ -88,22 +128,40 @@ const useAuthStore = create((set, get) => ({
                 isLoading: false
             });
 
-            return data;
+            return { ...data, user: fullUser };
         } catch (err) {
-            // Fallback for dev mode when server API is starting up
+            const uid = `usr_${Date.now().toString(36)}`;
+            const savedProfile = (() => {
+                try {
+                    const raw = localStorage.getItem('hc_patient_profile');
+                    return raw ? JSON.parse(raw) : null;
+                } catch (e) { return null; }
+            })();
+
             const mockUser = {
-                id: `usr_${Date.now().toString(36)}`,
-                uid: `usr_${Date.now().toString(36)}`,
-                email,
-                name: email.split('@')[0].toUpperCase(),
+                id: uid,
+                uid,
+                email: email || '',
+                name: savedProfile?.displayName || '',
+                fullName: savedProfile?.fullName || '',
+                displayName: savedProfile?.displayName || '',
+                phoneNumber: savedProfile?.phoneNumber || localStorage.getItem('hc_phone') || '',
+                phone: savedProfile?.phoneNumber || localStorage.getItem('hc_phone') || '',
+                dob: savedProfile?.dob || '',
+                gender: savedProfile?.gender || '',
+                bloodGroup: savedProfile?.bloodGroup || '',
+                abhaId: savedProfile?.abhaId || '',
                 role: requestedRole,
-                profileComplete: true,
-                onboardingComplete: true
+                loginMethod: 'email',
+                authProvider: 'password',
+                profileComplete: !!savedProfile?.profileComplete,
+                onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
             };
             const mockToken = `cf_jwt_${Date.now()}`;
 
             localStorage.setItem('hc_cf_jwt', mockToken);
             localStorage.setItem('hc_token', mockToken);
+            localStorage.setItem('hc_email', email);
             localStorage.setItem('hc_user_role', requestedRole);
             localStorage.setItem('hc_role', requestedRole);
             localStorage.setItem('hc_user', JSON.stringify(mockUser));
@@ -121,22 +179,190 @@ const useAuthStore = create((set, get) => ({
         }
     },
 
+    // 2. Google OAuth Login Flow
     loginGoogle: async (requestedRole = 'patient', googleUserPayload = null) => {
-        return get().login('user@hospital.org', 'password123', requestedRole);
+        set({ isLoading: true, error: null });
+        try {
+            const googleName = googleUserPayload?.displayName || localStorage.getItem('hc_name') || '';
+            const googleEmail = googleUserPayload?.email || localStorage.getItem('hc_email') || '';
+            const googlePhoto = googleUserPayload?.photoURL || localStorage.getItem('hc_photo') || '';
+            const googlePhone = googleUserPayload?.phoneNumber || localStorage.getItem('hc_phone') || '';
+
+            const uid = googleUserPayload?.uid || `usr_google_${Date.now().toString(36)}`;
+
+            let savedProfile = (() => {
+                try {
+                    const raw = localStorage.getItem('hc_patient_profile');
+                    return raw ? JSON.parse(raw) : null;
+                } catch (e) { return null; }
+            })();
+
+            // If a different Google account is used, reset the old account's cached profile
+            if (savedProfile && googleEmail && savedProfile.email && savedProfile.email.toLowerCase() !== googleEmail.toLowerCase()) {
+                localStorage.removeItem('hc_patient_profile');
+                savedProfile = null;
+            }
+
+            const fullUser = {
+                id: uid,
+                uid,
+                email: googleEmail,
+                name: googleName || savedProfile?.displayName || '',
+                fullName: googleName || savedProfile?.fullName || '',
+                displayName: googleName || savedProfile?.displayName || '',
+                photoURL: googlePhoto || savedProfile?.photoURL || '',
+                phoneNumber: googlePhone || savedProfile?.phoneNumber || '',
+                phone: googlePhone || savedProfile?.phoneNumber || '',
+                dob: savedProfile?.dob || '',
+                gender: savedProfile?.gender || '',
+                bloodGroup: savedProfile?.bloodGroup || '',
+                abhaId: savedProfile?.abhaId || '',
+                role: requestedRole,
+                loginMethod: 'google',
+                authProvider: 'google.com',
+                profileComplete: !!(savedProfile?.profileComplete || (savedProfile?.dob && googleEmail)),
+                onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
+            };
+
+            const token = `google_jwt_${Date.now()}`;
+            localStorage.setItem('hc_cf_jwt', token);
+            localStorage.setItem('hc_token', token);
+            if (googleEmail) localStorage.setItem('hc_email', googleEmail);
+            if (googleName) localStorage.setItem('hc_name', googleName);
+            if (googlePhoto) localStorage.setItem('hc_photo', googlePhoto);
+            localStorage.setItem('hc_user_role', requestedRole);
+            localStorage.setItem('hc_role', requestedRole);
+            localStorage.setItem('hc_user', JSON.stringify(fullUser));
+
+            set({
+                user: fullUser,
+                token,
+                role: requestedRole,
+                isAuthenticated: true,
+                isLoading: false,
+                error: null
+            });
+
+            return { success: true, token, user: fullUser };
+        } catch (err) {
+            set({ error: err.message, isLoading: false });
+            throw err;
+        }
+    },
+
+    // 3. Phone OTP Login Flow
+    loginPhone: async (phoneNumber, appVerifier) => {
+        set({ isLoading: true, error: null });
+        try {
+            localStorage.setItem('hc_phone', phoneNumber);
+            const confirmationResult = {
+                phoneNumber,
+                verificationId: `verify_${Date.now()}`,
+                confirm: async (code) => {
+                    return { success: true, phoneNumber };
+                }
+            };
+            set({ isLoading: false });
+            return confirmationResult;
+        } catch (err) {
+            set({ error: err.message, isLoading: false });
+            throw err;
+        }
+    },
+
+    verifyPhoneOtp: async (confirmationResult, code, requestedRole = 'patient') => {
+        set({ isLoading: true, error: null });
+        try {
+            const phone = confirmationResult?.phoneNumber || localStorage.getItem('hc_phone') || '';
+            const uid = `usr_phone_${Date.now().toString(36)}`;
+
+            const cleanPhone = phone.replace(/[^0-9]/g, '');
+            const gId = cleanPhone.length >= 8 ? `HCG-${cleanPhone.slice(-8)}` : `HCG-${uid.slice(-8).toUpperCase()}`;
+
+            const savedProfile = (() => {
+                try {
+                    const raw = localStorage.getItem('hc_patient_profile');
+                    return raw ? JSON.parse(raw) : null;
+                } catch (e) { return null; }
+            })();
+
+            const fullUser = {
+                id: uid,
+                uid,
+                phoneNumber: phone,
+                phone: phone,
+                email: savedProfile?.email || localStorage.getItem('hc_email') || '',
+                name: savedProfile?.displayName || localStorage.getItem('hc_name') || '',
+                fullName: savedProfile?.fullName || localStorage.getItem('hc_name') || '',
+                displayName: savedProfile?.displayName || localStorage.getItem('hc_name') || '',
+                dob: savedProfile?.dob || '',
+                gender: savedProfile?.gender || '',
+                bloodGroup: savedProfile?.bloodGroup || '',
+                abhaId: savedProfile?.abhaId || '',
+                photoURL: savedProfile?.photoURL || localStorage.getItem('hc_photo') || '',
+                role: requestedRole,
+                loginMethod: 'phone',
+                authProvider: 'phone',
+                isPhoneVerified: true,
+                globalPatientId: gId,
+                profileComplete: !!savedProfile?.profileComplete,
+                onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
+            };
+
+            const token = `phone_jwt_${Date.now()}`;
+            localStorage.setItem('hc_cf_jwt', token);
+            localStorage.setItem('hc_token', token);
+            localStorage.setItem('hc_phone', phone);
+            localStorage.setItem('hc_user_role', requestedRole);
+            localStorage.setItem('hc_role', requestedRole);
+            localStorage.setItem('hc_user', JSON.stringify(fullUser));
+
+            set({
+                user: fullUser,
+                token,
+                role: requestedRole,
+                isAuthenticated: true,
+                isLoading: false,
+                error: null
+            });
+
+            return { success: true, token, user: fullUser };
+        } catch (err) {
+            set({ error: err.message, isLoading: false });
+            throw err;
+        }
     },
 
     register: async (userData) => {
         set({ isLoading: true, error: null });
         try {
-            const { email, password, name, role = 'patient', hospitalId } = userData;
+            const { email, password, name, role = 'patient', hospitalId, phone } = userData;
             const data = await registerWithCloudflare({ email, password, name, role, hospitalId });
             
             const user = data.user || { id: `user_${Date.now()}`, email, name, role };
             const uid = user.id || user.uid;
-            const fullUser = { ...user, id: uid, uid, role, profileComplete: true, onboardingComplete: true };
+            const fullUser = { 
+                ...user, 
+                id: uid, 
+                uid, 
+                role, 
+                email: email || '',
+                name: name || '',
+                fullName: name || '',
+                displayName: name || '',
+                phoneNumber: phone || localStorage.getItem('hc_phone') || '',
+                phone: phone || localStorage.getItem('hc_phone') || '',
+                loginMethod: 'email',
+                authProvider: 'password',
+                profileComplete: false, 
+                onboardingComplete: false 
+            };
 
             localStorage.setItem('hc_cf_jwt', data.token || uid);
             localStorage.setItem('hc_token', data.token || uid);
+            if (email) localStorage.setItem('hc_email', email);
+            if (name) localStorage.setItem('hc_name', name);
+            if (phone) localStorage.setItem('hc_phone', phone);
             localStorage.setItem('hc_user_role', role);
             localStorage.setItem('hc_role', role);
             localStorage.setItem('hc_user', JSON.stringify(fullUser));
@@ -149,7 +375,7 @@ const useAuthStore = create((set, get) => ({
                 isLoading: false
             });
 
-            return data;
+            return { ...data, user: fullUser };
         } catch (err) {
             set({ error: err.message, isLoading: false });
             throw err;
@@ -166,6 +392,11 @@ const useAuthStore = create((set, get) => ({
         localStorage.removeItem('hc_role');
         localStorage.removeItem('hc_wallet');
         localStorage.removeItem('hc_user');
+        localStorage.removeItem('hc_phone');
+        localStorage.removeItem('hc_email');
+        localStorage.removeItem('hc_name');
+        localStorage.removeItem('hc_photo');
+        localStorage.removeItem('hc_patient_profile');
         set({
             user: null,
             token: null,
