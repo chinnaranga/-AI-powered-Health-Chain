@@ -81,12 +81,22 @@ export default function PatientOnboarding() {
 
                 const storedPhone = localStorage.getItem('hc_phone') || '';
                 const storedEmail = localStorage.getItem('hc_email') || '';
-                const storedName = localStorage.getItem('hc_name') || '';
+                const sanitizeEmail = (em) => {
+                    if (!em) return '';
+                    if (em.includes('user@hospital.org') || /^user_[a-z0-9]+@gmail\.com$/i.test(em)) return '';
+                    return em;
+                };
 
-                const currentUser = useAuthStore.getState().user || user || {};
+                const sanitizeName = (nm) => {
+                    if (!nm || nm === 'Google User') return '';
+                    return nm;
+                };
 
-                const realFullName = savedProfile?.displayName || savedProfile?.name || savedProfile?.fullName || currentUser?.displayName || currentUser?.name || currentUser?.fullName || storedName || '';
-                const realEmail = savedProfile?.email || (currentUser?.email && !currentUser.email.includes('user@hospital.org') ? currentUser.email : '') || storedEmail || '';
+                const rawName = savedProfile?.displayName || savedProfile?.name || savedProfile?.fullName || currentUser?.displayName || currentUser?.name || currentUser?.fullName || storedName || '';
+                const rawEmail = savedProfile?.email || currentUser?.email || storedEmail || '';
+
+                const realFullName = sanitizeName(rawName);
+                const realEmail = sanitizeEmail(rawEmail);
                 const realPhone = savedProfile?.phoneNumber || savedProfile?.phone || currentUser?.phoneNumber || currentUser?.phone || storedPhone || '';
                 const realDob = savedProfile?.dob || currentUser?.dob || '';
                 const realGender = savedProfile?.gender || currentUser?.gender || 'Male';

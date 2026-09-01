@@ -75,7 +75,7 @@ export default function Header() {
             type="button"
             onClick={(e) => {
               e.preventDefault();
-              navigate('/login');
+              navigate('/login/patient');
             }}
             className="text-xs font-bold uppercase tracking-wider text-[#666666] hover:text-[#111111] transition-colors duration-200 px-4 py-2 border border-transparent rounded hover:border-[#ECECEC] bg-transparent cursor-pointer"
           >
@@ -138,7 +138,7 @@ export default function Header() {
                 <button
                   onClick={() => {
                     setMobileMenuOpen(false);
-                    navigate('/login');
+                    navigate('/login/patient');
                   }}
                   className="w-full text-center py-3 text-xs font-bold uppercase tracking-wider text-[#111111] border border-[#111111] rounded hover:bg-[#F7F4EB] transition-colors"
                 >

@@ -1,23 +1,18 @@
 export const getApiBaseUrl = () => {
-    const envUrl = import.meta.env.VITE_API_URL;
-    if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
-        return envUrl;
-    }
     if (typeof window !== 'undefined') {
         const hostname = window.location.hostname;
         const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
         if (isLocal) {
-            return envUrl || 'http://localhost:3001/api';
+            return 'http://localhost:3001/api';
         }
     }
-    return envUrl || 'https://healthchain-backend-kz6q.onrender.com/api';
+    return 'https://healthchain-backend-kz6q.onrender.com/api';
 };
-
-const BASE_URL = getApiBaseUrl();
 
 export const apiClient = {
     async request(endpoint, options = {}) {
-        const token = localStorage.getItem('hc_token');
+        const baseUrl = getApiBaseUrl();
+        const token = localStorage.getItem('hc_token') || localStorage.getItem('hc_cf_jwt') || 'session_token';
         const headers = {
             'Content-Type': 'application/json',
             ...(options.headers || {})
@@ -33,7 +28,7 @@ export const apiClient = {
         };
 
         try {
-            const res = await fetch(`${BASE_URL}${endpoint}`, config);
+            const res = await fetch(`${baseUrl}${endpoint}`, config);
             const contentType = res.headers.get('content-type') || '';
 
             if (contentType.includes('text/html')) {

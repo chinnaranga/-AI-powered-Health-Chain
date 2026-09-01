@@ -58,7 +58,7 @@ export default function HeroSection() {
               type="button"
               onClick={(e) => {
                 e.preventDefault();
-                navigate('/login');
+                navigate('/login/patient');
               }}
               className="px-8 py-3.5 rounded bg-transparent text-[#111111] font-sans text-xs font-bold uppercase tracking-widest border border-[#111111] hover:bg-[#111111]/5 transition-colors duration-200 cursor-pointer"
             >

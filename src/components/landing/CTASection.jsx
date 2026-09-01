@@ -41,10 +41,10 @@ export default function CTASection() {
               Book Demo
             </button>
             <button
-              onClick={() => navigate('/login')}
+              onClick={() => navigate('/login/patient')}
               className="w-full sm:w-auto px-8 py-3.5 rounded bg-transparent text-[#111111] text-xs font-bold uppercase tracking-widest border border-[#111111] hover:bg-[#111111]/5 transition-colors"
             >
-              Contact Sales
+              Sign In
             </button>
           </div>
         </motion.div>

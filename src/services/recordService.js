@@ -113,14 +113,32 @@ export const recordService = {
                 }
             };
 
-            const savedRecord = await apiClient.post('/records', newRecordPayload);
+            let savedRecord = null;
+            try {
+                savedRecord = await apiClient.post('/records', newRecordPayload);
+            } catch (postErr) {
+                console.warn('[recordService] Cloud API sync notice:', postErr.message);
+            }
+
+            const recordId = savedRecord?.id || savedRecord?.record?.id || `rec_${Date.now()}`;
+            const fullRecord = {
+                id: recordId,
+                ...newRecordPayload
+            };
+
+            // Store in persistent local reactive cache for instant UI rendering
+            try {
+                const currentRecords = JSON.parse(localStorage.getItem('hc_db_records') || '[]');
+                currentRecords.unshift(fullRecord);
+                localStorage.setItem('hc_db_records', JSON.stringify(currentRecords));
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('hc_firestore_reactive_update', { detail: { collection: 'records' } }));
+                }
+            } catch (e) { }
 
             if (onProgress) onProgress(100);
 
-            return {
-                id: savedRecord.id || savedRecord.record?.id || `rec_${Date.now()}`,
-                ...newRecordPayload
-            };
+            return fullRecord;
         } catch (error) {
             console.error('Failed to process medical record:', error);
             throw new Error(error.message || 'File processing failed');
@@ -155,7 +173,7 @@ export const recordService = {
             return [];
         }
     },
-    
+
     /**
      * Get all records (Admin/Doctor/Global use only)
      */

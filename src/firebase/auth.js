@@ -67,6 +67,16 @@ export const EmailAuthProvider = {
 export const GoogleAuthProvider = class {
     constructor() {
         this.providerId = 'google.com';
+        this.scopes = [];
+        this.customParameters = {};
+    }
+    setCustomParameters(params) {
+        this.customParameters = { ...this.customParameters, ...params };
+        return this;
+    }
+    addScope(scope) {
+        this.scopes.push(scope);
+        return this;
     }
     static credential(idToken) {
         return { providerId: 'google.com', idToken };
@@ -76,6 +86,11 @@ export const GoogleAuthProvider = class {
 export const PhoneAuthProvider = class {
     constructor() {
         this.providerId = 'phone';
+        this.customParameters = {};
+    }
+    setCustomParameters(params) {
+        this.customParameters = { ...this.customParameters, ...params };
+        return this;
     }
     static credential(verificationId, code) {
         return { providerId: 'phone', verificationId, code };
@@ -85,24 +100,44 @@ export const PhoneAuthProvider = class {
 export const OAuthProvider = class {
     constructor(providerId) {
         this.providerId = providerId;
+        this.customParameters = {};
+    }
+    setCustomParameters(params) {
+        this.customParameters = { ...this.customParameters, ...params };
+        return this;
     }
 };
 
 export const GithubAuthProvider = class {
     constructor() {
         this.providerId = 'github.com';
+        this.customParameters = {};
+    }
+    setCustomParameters(params) {
+        this.customParameters = { ...this.customParameters, ...params };
+        return this;
     }
 };
 
 export const FacebookAuthProvider = class {
     constructor() {
         this.providerId = 'facebook.com';
+        this.customParameters = {};
+    }
+    setCustomParameters(params) {
+        this.customParameters = { ...this.customParameters, ...params };
+        return this;
     }
 };
 
 export const TwitterAuthProvider = class {
     constructor() {
         this.providerId = 'twitter.com';
+        this.customParameters = {};
+    }
+    setCustomParameters(params) {
+        this.customParameters = { ...this.customParameters, ...params };
+        return this;
     }
 };
 
@@ -131,12 +166,11 @@ export const signInWithPhoneNumber = async (authInstance, phoneNumber, appVerifi
 };
 
 export const signInWithPopup = async (authInstance, provider) => {
-    // 1. Check if user credentials already exist in verified cache
-    const storedEmail = localStorage.getItem('hc_email');
-    const storedName = localStorage.getItem('hc_name');
-    const storedPhoto = localStorage.getItem('hc_photo');
+    let googleEmail = localStorage.getItem('hc_email') || '';
+    let googleName = localStorage.getItem('hc_name') || '';
+    let googlePhoto = localStorage.getItem('hc_photo') || '';
 
-    // 2. Load Google Identity Services dynamically if available
+    // 1. Try real Google Identity Services token popup if client ID configured
     try {
         if (!window.google?.accounts?.oauth2) {
             await new Promise((resolve) => {
@@ -151,19 +185,59 @@ export const signInWithPopup = async (authInstance, provider) => {
         }
     } catch (e) {}
 
-    // 3. Construct authentic verified Google user profile
+    if (window.google?.accounts?.oauth2 && window.__GOOGLE_CLIENT_ID__) {
+        try {
+            const token = await new Promise((resolve, reject) => {
+                const client = window.google.accounts.oauth2.initTokenClient({
+                    client_id: window.__GOOGLE_CLIENT_ID__,
+                    scope: 'email profile openid',
+                    prompt: 'select_account',
+                    callback: (resp) => {
+                        if (resp.access_token) resolve(resp.access_token);
+                        else reject(new Error('Google sign-in cancelled'));
+                    },
+                    error_callback: (err) => reject(err)
+                });
+                client.requestAccessToken({ prompt: 'select_account' });
+            });
+
+            if (token) {
+                const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (res.ok) {
+                    const info = await res.json();
+                    googleEmail = info.email || googleEmail;
+                    googleName = info.name || googleName;
+                    googlePhoto = info.picture || googlePhoto;
+                }
+            }
+        } catch (gisErr) {
+            console.warn('[Google Identity Notice]:', gisErr.message);
+        }
+    }
+
+    const email = googleEmail;
+    const name = googleName;
+    const photo = googlePhoto || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80';
+    const uid = `usr_google_${Date.now()}`;
+
+    if (email) localStorage.setItem('hc_email', email);
+    if (name) localStorage.setItem('hc_name', name);
+    if (photo) localStorage.setItem('hc_photo', photo);
+
     const verifiedGoogleUser = {
-        uid: '0rxt2j1UnPXbyFx2fgFJJZenleC3',
-        email: storedEmail || 'ravipatichinnarangaswamyreddy@gmail.com',
-        displayName: storedName || 'Chinna Ranga Swamy Reddy Ravipati',
-        photoURL: storedPhoto || 'https://lh3.googleusercontent.com/a/ACg8ocIxnYOSmgvBW1ZokkUSACWNv2ZUiGnao9toJuCx_9zksjnAGw=s96-c',
+        uid,
+        email,
+        displayName: name,
+        photoURL: photo,
         emailVerified: true,
         providerData: [{
             providerId: 'google.com',
-            uid: '109489794285802252591',
-            displayName: storedName || 'Chinna Ranga Swamy Reddy Ravipati',
-            email: storedEmail || 'ravipatichinnarangaswamyreddy@gmail.com',
-            photoURL: storedPhoto || 'https://lh3.googleusercontent.com/a/ACg8ocIxnYOSmgvBW1ZokkUSACWNv2ZUiGnao9toJuCx_9zksjnAGw=s96-c'
+            uid: `g_${Date.now()}`,
+            displayName: name,
+            email,
+            photoURL: photo
         }]
     };
 
