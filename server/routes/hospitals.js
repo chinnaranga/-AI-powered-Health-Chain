@@ -1,66 +1,116 @@
 import express from 'express';
-import { adminDb } from '../config/firebaseAdmin.js';
+import db, { queryDb, getDb, runDb } from '../config/db.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
+import { writeAuditEvent } from '../services/auditLogger.js';
 
 const router = express.Router();
 
-// Register a Hospital Organization
+// 1. POST /api/hospitals/register - Register a Hospital Organization in Neon PostgreSQL
 router.post('/hospitals/register', async (req, res) => {
     try {
-        const { name, regNum, licenseNum, address, city, state, country, verificationDocuments } = req.body;
+        const { name, regNum, licenseNum, address, city, state, country, contactEmail, contactPhone, verificationDocuments } = req.body;
         if (!name || !regNum || !licenseNum) {
             return res.status(400).json({ success: false, message: 'Name, registration, and license numbers are required.' });
         }
 
-        const docRef = adminDb.collection('hospitals').doc();
-        const hospitalData = {
-            id: docRef.id,
-            hospitalId: docRef.id,
-            tenantId: docRef.id,
+        const hospitalCode = `HOSP_${Date.now().toString(36).toUpperCase()}`;
+
+        const insertRes = await runDb(
+            `INSERT INTO hospitals (
+                id, name, code, license_number, registration_number, address, city, state, country, 
+                contact_email, contact_phone, status, metadata, created_at, updated_at
+            ) VALUES (
+                gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ) RETURNING id, name, code, license_number, registration_number, address, city, state, country, status, created_at`,
+            [
+                name,
+                hospitalCode,
+                licenseNum,
+                regNum,
+                address || '',
+                city || 'Hyderabad',
+                state || 'Telangana',
+                country || 'India',
+                contactEmail || null,
+                contactPhone || null,
+                JSON.stringify({ verificationDocuments: verificationDocuments || [] })
+            ]
+        );
+
+        const hospitalData = insertRes.rows?.[0] || {
+            id: `hosp_${Date.now()}`,
             name,
-            regNum,
-            licenseNum,
-            address: address || '',
-            city: city || 'Hyderabad',
-            state: state || 'Telangana',
-            country: country || 'India',
-            status: 'approved',
-            verificationDocuments: verificationDocuments || [],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            code: hospitalCode,
+            status: 'approved'
         };
 
-        await docRef.set(hospitalData);
+        await writeAuditEvent({
+            action: 'HOSPITAL_REGISTERED',
+            resourceType: 'hospital',
+            resourceId: hospitalData.id,
+            details: { name, code: hospitalCode, city: city || 'Hyderabad' },
+            status: 'SUCCESS'
+        });
 
         res.status(201).json({
             success: true,
-            message: 'Hospital registered successfully',
-            hospital: hospitalData
+            message: 'Hospital registered successfully in Neon PostgreSQL',
+            hospital: {
+                ...hospitalData,
+                hospitalId: hospitalData.id,
+                tenantId: hospitalData.id
+            }
         });
     } catch (err) {
+        console.error('[Hospital Register Error]:', err);
         res.status(500).json({ success: false, message: err.message });
     }
 });
 
-// GET Hospital List
+// 2. GET /api/hospitals - List hospitals from Neon PostgreSQL
 router.get('/hospitals', async (req, res) => {
     try {
-        const snapshot = await adminDb.collection('hospitals').get();
-        const hospitals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const rows = await queryDb(
+            `SELECT id, name, code, license_number as "licenseNum", registration_number as "regNum", 
+                    address, city, state, country, contact_email, contact_phone, status, created_at as "createdAt" 
+             FROM hospitals 
+             ORDER BY created_at DESC LIMIT 100`
+        );
+
+        const hospitals = rows.map(r => ({
+            ...r,
+            hospitalId: r.id,
+            tenantId: r.id
+        }));
+
         res.json({ success: true, hospitals });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message, hospitals: [] });
     }
 });
 
-// GET Single Hospital
+// 3. GET /api/hospitals/:id - Get Single Hospital
 router.get('/hospitals/:id', authMiddleware, async (req, res) => {
     try {
-        const docSnap = await adminDb.collection('hospitals').doc(req.params.id).get();
-        if (!docSnap.exists) {
-            return res.status(404).json({ success: false, message: 'Hospital not found.' });
+        const hospital = await getDb(
+            `SELECT id, name, code, license_number as "licenseNum", registration_number as "regNum", 
+                    address, city, state, country, contact_email, contact_phone, status, created_at as "createdAt" 
+             FROM hospitals WHERE id = ? OR code = ? LIMIT 1`,
+            [req.params.id, req.params.id]
+        );
+
+        if (!hospital) {
+            return res.status(404).json({ success: false, message: 'Hospital not found in PostgreSQL.' });
         }
-        res.json({ success: true, hospital: { id: docSnap.id, ...docSnap.data() } });
+
+        res.json({
+            success: true,
+            hospital: {
+                ...hospital,
+                hospitalId: hospital.id,
+                tenantId: hospital.id
+            }
+        });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }

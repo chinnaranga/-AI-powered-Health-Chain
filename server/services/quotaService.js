@@ -1,17 +1,17 @@
-import { adminDb } from '../config/firebaseAdmin.js';
+import db, { getDb, runDb } from '../config/db.js';
 
-// Cloudflare R2 Free Tier Quota Constants
+// Cloudflare R2 / Storage Free Tier Quota Constants
 export const QUOTA_LIMITS = {
     MAX_STORAGE_BYTES: 10 * 1024 * 1024 * 1024, // 10 GB-month
     MAX_CLASS_A_REQUESTS: 1000000,              // 1,000,000 per month (PUT, DELETE)
     MAX_CLASS_B_REQUESTS: 10000000              // 10,000,000 per month (GET, HEAD)
 };
 
-// Local in-memory fallback cache for development & testing without live GCP keys
+// Local in-memory fallback cache for development & fast access
 const inMemoryUsageStore = new Map();
 
 /**
- * Gets formatted current month partition key e.g. "2026-08"
+ * Gets formatted current month partition key e.g. "2026-09"
  */
 export function getCurrentMonthKey() {
     const now = new Date();
@@ -21,7 +21,7 @@ export function getCurrentMonthKey() {
 }
 
 /**
- * Gets next month reset date ISO string e.g. "2026-09-01T00:00:00.000Z"
+ * Gets next month reset date ISO string
  */
 export function getNextResetDate() {
     const now = new Date();
@@ -33,9 +33,9 @@ export function getNextResetDate() {
  * Calculates warning level string ("normal", "70%", "85%", "95%", "100%")
  */
 function calculateWarningLevel(storageBytes, classARequests, classBRequests) {
-    const storageRatio = storageBytes / QUOTA_LIMITS.MAX_STORAGE_BYTES;
-    const classARatio = classARequests / QUOTA_LIMITS.MAX_CLASS_A_REQUESTS;
-    const classBRatio = classBRequests / QUOTA_LIMITS.MAX_CLASS_B_REQUESTS;
+    const storageRatio = Number(storageBytes) / QUOTA_LIMITS.MAX_STORAGE_BYTES;
+    const classARatio = Number(classARequests) / QUOTA_LIMITS.MAX_CLASS_A_REQUESTS;
+    const classBRatio = Number(classBRequests) / QUOTA_LIMITS.MAX_CLASS_B_REQUESTS;
 
     const maxRatio = Math.max(storageRatio, classARatio, classBRatio);
 
@@ -84,25 +84,49 @@ function getDefaultUsageRecord(hospitalId) {
 }
 
 /**
- * Helper to fetch or initialize monthly usage record for a hospital tenant
+ * Helper to fetch or initialize monthly usage record for a hospital tenant in PostgreSQL
  */
 export async function getMonthlyStorageUsage(hospitalId = 'default_hospital') {
     const monthKey = getCurrentMonthKey();
     const docId = `usage_${hospitalId}_${monthKey}`;
 
     try {
-        const docRef = adminDb.collection('storageUsage').doc(docId);
-        const docSnap = await docRef.get();
+        const row = await getDb(
+            `SELECT * FROM storage_usage WHERE hospital_id = ? AND month = ? LIMIT 1`,
+            [hospitalId, monthKey]
+        );
 
-        if (docSnap.exists) {
-            return docSnap.data();
+        if (row) {
+            return {
+                docId,
+                hospitalId: row.hospital_id,
+                month: row.month,
+                totalStorageBytes: Number(row.total_storage_bytes) || 0,
+                maxStorageBytes: QUOTA_LIMITS.MAX_STORAGE_BYTES,
+                uploadCount: Number(row.upload_count) || 0,
+                downloadCount: Number(row.download_count) || 0,
+                previewCount: Number(row.preview_count) || 0,
+                deleteCount: Number(row.delete_count) || 0,
+                classARequests: Number(row.class_a_requests) || 0,
+                maxClassARequests: QUOTA_LIMITS.MAX_CLASS_A_REQUESTS,
+                classBRequests: Number(row.class_b_requests) || 0,
+                maxClassBRequests: QUOTA_LIMITS.MAX_CLASS_B_REQUESTS,
+                categoryBreakdown: typeof row.category_breakdown === 'string' ? JSON.parse(row.category_breakdown) : (row.category_breakdown || {}),
+                warningLevel: row.warning_level || 'normal',
+                isBlocked: !!row.is_blocked,
+                resetAt: row.reset_at ? new Date(row.reset_at).toISOString() : getNextResetDate()
+            };
         }
 
         const defaultUsage = getDefaultUsageRecord(hospitalId);
-        await docRef.set(defaultUsage);
+        await runDb(
+            `INSERT INTO storage_usage (id, hospital_id, month, total_storage_bytes, upload_count, download_count, preview_count, delete_count, class_a_requests, class_b_requests, category_breakdown, warning_level, is_blocked, reset_at)
+             VALUES (gen_random_uuid(), ?, ?, 0, 0, 0, 0, 0, 0, 0, ?::jsonb, 'normal', false, ?)
+             ON CONFLICT (hospital_id, month) DO NOTHING`,
+            [hospitalId, monthKey, JSON.stringify(defaultUsage.categoryBreakdown), defaultUsage.resetAt]
+        );
         return defaultUsage;
     } catch (err) {
-        // Fallback to in-memory store for local testing without Firestore keys
         if (!inMemoryUsageStore.has(docId)) {
             inMemoryUsageStore.set(docId, getDefaultUsageRecord(hospitalId));
         }
@@ -112,7 +136,6 @@ export async function getMonthlyStorageUsage(hospitalId = 'default_hospital') {
 
 /**
  * Server-side Quota Verification
- * Validates whether requested operation is permitted under current monthly limits
  */
 export async function checkStorageQuota({ hospitalId = 'default_hospital', requestedBytes = 0, operationType = 'upload' }) {
     const usage = await getMonthlyStorageUsage(hospitalId);
@@ -148,8 +171,7 @@ export async function checkStorageQuota({ hospitalId = 'default_hospital', reque
 }
 
 /**
- * Atomic Quota Recording & Event Logging
- * Updates storage counters in Firestore after a storage operation
+ * Atomic Quota Recording & Event Logging in PostgreSQL
  */
 export async function recordStorageUsage({
     hospitalId = 'default_hospital',
@@ -205,23 +227,38 @@ export async function recordStorageUsage({
     inMemoryUsageStore.set(docId, updatedUsage);
 
     try {
-        const docRef = adminDb.collection('storageUsage').doc(docId);
-        await docRef.set(updatedUsage, { merge: true });
-
-        await adminDb.collection('storageEvents').add({
-            eventId: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            hospitalId,
-            departmentId,
-            userId,
-            operationType,
-            fileType,
-            bytesDelta,
-            warningLevel,
-            timestamp: new Date().toISOString()
-        });
-    } catch (e) {
-        // Fallback for dev mode
-    }
+        await runDb(
+            `INSERT INTO storage_usage (id, hospital_id, month, total_storage_bytes, upload_count, download_count, preview_count, delete_count, class_a_requests, class_b_requests, category_breakdown, warning_level, is_blocked, reset_at, updated_at)
+             VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT (hospital_id, month) DO UPDATE SET
+                total_storage_bytes = excluded.total_storage_bytes,
+                upload_count = excluded.upload_count,
+                download_count = excluded.download_count,
+                preview_count = excluded.preview_count,
+                delete_count = excluded.delete_count,
+                class_a_requests = excluded.class_a_requests,
+                class_b_requests = excluded.class_b_requests,
+                category_breakdown = excluded.category_breakdown,
+                warning_level = excluded.warning_level,
+                is_blocked = excluded.is_blocked,
+                updated_at = CURRENT_TIMESTAMP`,
+            [
+                hospitalId,
+                monthKey,
+                newStorageBytes,
+                newUploadCount,
+                newDownloadCount,
+                newPreviewCount,
+                newDeleteCount,
+                newClassA,
+                newClassB,
+                JSON.stringify(categoryBreakdown),
+                warningLevel,
+                isBlocked,
+                updatedUsage.resetAt || getNextResetDate()
+            ]
+        );
+    } catch (e) {}
 
     return updatedUsage;
 }

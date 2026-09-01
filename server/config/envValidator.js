@@ -6,8 +6,7 @@
 const REQUIRED_KEYS = [
     'PORT',
     'JWT_SECRET',
-    'JWT_REFRESH_SECRET',
-    'FIREBASE_PROJECT_ID'
+    'JWT_REFRESH_SECRET'
 ];
 
 const OPTIONAL_R2_KEYS = [
@@ -20,6 +19,7 @@ const OPTIONAL_R2_KEYS = [
 export function validateEnvironment() {
     console.log('[HealthChain Env Validator] Checking environment configuration...');
 
+    const hasDatabaseUrl = !!(process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || process.env.POSTGRES_URL);
     const missingKeys = REQUIRED_KEYS.filter(key => !process.env[key]);
     if (missingKeys.length > 0) {
         console.warn(`[HealthChain Env Warning] Missing non-fatal environment variables: ${missingKeys.join(', ')}`);
@@ -29,14 +29,17 @@ export function validateEnvironment() {
     const isR2Configured = missingR2.length === 0;
 
     console.log(`[HealthChain Env Diagnostic] Status:
-- Firebase Project: ${process.env.FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT || 'healthcare-edb75'}
+- Primary Database: ${hasDatabaseUrl ? 'Neon PostgreSQL (Configured via DATABASE_URL)' : 'Local SQLite Fallback (Set DATABASE_URL in .env to activate live Neon)'}
+- Firebase Hosting: https://healthcare-edb75.web.app/
 - Cloudflare R2 Storage: ${isR2Configured ? 'Configured (Live Credentials)' : 'Dev Emulator Mode (SigV4 Presigned URLs Active)'}
 - JWT Session Protection: Active
+- Real-time WebSocket: Active (/ws)
 - Environment Mode: ${process.env.NODE_ENV || 'development'}
 `);
 
     return {
         isValid: missingKeys.length === 0,
+        hasDatabaseUrl,
         isR2Configured,
         missingKeys
     };

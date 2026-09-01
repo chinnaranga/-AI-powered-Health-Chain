@@ -1,3 +1,4 @@
+import neon, { query as neonQuery, getDatabaseUrl } from './neon.js';
 import sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -6,51 +7,112 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
- * HealthChain Cloudflare D1 / Relational Database Engine
- * Connects to SQLite/D1 database store for zero-latency patient records,
- * appointments, prescriptions, audit trails, and role management.
+ * HealthChain Primary Database Engine
+ * Primary: Neon PostgreSQL (Serverless Relational Cloud Database)
+ * Fallback: Local SQLite for offline development if DATABASE_URL is not configured
  */
 
-const dbPath = path.resolve(__dirname, '../healthcare.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.warn('[Cloudflare D1 Engine notice] Database connection initial check:', err.message);
-    } else {
-        console.log('[Cloudflare D1 Engine] Connected to Cloudflare D1 local database store at', dbPath);
+let sqliteDb = null;
+
+function getSqliteFallback() {
+    if (!sqliteDb) {
+        const dbPath = path.resolve(__dirname, '../healthcare.db');
+        sqliteDb = new sqlite3.Database(dbPath, (err) => {
+            if (err) {
+                console.warn('[Database Engine Notice] SQLite fallback check:', err.message);
+            }
+        });
     }
-});
+    return sqliteDb;
+}
 
-// Utility helper for async SQL queries
-export function queryDb(sql, params = []) {
+/**
+ * Helper to convert '?' placeholder queries to PostgreSQL '$1, $2, ...' syntax
+ */
+function convertPlaceholders(sql) {
+    let index = 1;
+    return sql.replace(/\?/g, () => `$${index++}`);
+}
+
+/**
+ * Universal async query executor returning an Array of rows
+ * @param {string} sql - SQL statement
+ * @param {Array} params - Query parameters
+ * @returns {Promise<Array>}
+ */
+export async function queryDb(sql, params = []) {
+    const isNeonActive = !!getDatabaseUrl();
+
+    if (isNeonActive) {
+        const pgSql = convertPlaceholders(sql);
+        const res = await neonQuery(pgSql, params);
+        return res.rows || [];
+    }
+
+    // Fallback mode for local development
     return new Promise((resolve, reject) => {
-        db.all(sql, params, (err, rows) => {
+        getSqliteFallback().all(sql, params, (err, rows) => {
             if (err) return reject(err);
-            resolve(rows);
+            resolve(rows || []);
         });
     });
 }
 
-export function runDb(sql, params = []) {
+/**
+ * Universal async query executor returning a single row or null
+ * @param {string} sql - SQL statement
+ * @param {Array} params - Query parameters
+ * @returns {Promise<Object|null>}
+ */
+export async function getDb(sql, params = []) {
+    const isNeonActive = !!getDatabaseUrl();
+
+    if (isNeonActive) {
+        const pgSql = convertPlaceholders(sql);
+        const res = await neonQuery(pgSql, params);
+        return (res.rows && res.rows[0]) ? res.rows[0] : null;
+    }
+
     return new Promise((resolve, reject) => {
-        db.run(sql, params, function (err) {
+        getSqliteFallback().get(sql, params, (err, row) => {
             if (err) return reject(err);
-            resolve({ lastID: this.lastID, changes: this.changes });
+            resolve(row || null);
         });
     });
 }
 
-export function getDb(sql, params = []) {
+/**
+ * Universal async query executor for Mutations (INSERT / UPDATE / DELETE)
+ * @param {string} sql - SQL statement
+ * @param {Array} params - Query parameters
+ * @returns {Promise<Object>}
+ */
+export async function runDb(sql, params = []) {
+    const isNeonActive = !!getDatabaseUrl();
+
+    if (isNeonActive) {
+        const pgSql = convertPlaceholders(sql);
+        const res = await neonQuery(pgSql, params);
+        return {
+            rowCount: res.rowCount,
+            rows: res.rows || [],
+            lastID: res.rows?.[0]?.id || null,
+            changes: res.rowCount
+        };
+    }
+
     return new Promise((resolve, reject) => {
-        db.get(sql, params, (err, row) => {
+        getSqliteFallback().run(sql, params, function (err) {
             if (err) return reject(err);
-            resolve(row);
+            resolve({ lastID: this.lastID, changes: this.changes, rowCount: this.changes });
         });
     });
 }
 
 export default {
     queryDb,
-    runDb,
     getDb,
-    db
+    runDb,
+    query: neonQuery,
+    neon
 };

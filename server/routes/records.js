@@ -1,94 +1,52 @@
 import express from 'express';
-import { adminDb } from '../config/firebaseAdmin.js';
+import db, { queryDb, getDb, runDb } from '../config/db.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
+import { writeAuditEvent } from '../services/auditLogger.js';
+import { realtimeService } from '../services/realtimeService.js';
+import { addRecord, getRecords } from '../controllers/recordController.js';
 
 const router = express.Router();
 
 // GET /api/records - Fetch all clinical records filtered by tenant & permissions
-router.get('/records', authMiddleware, async (req, res) => {
+router.get('/records', authMiddleware, getRecords);
+
+// POST /api/records - Create new multi-tenant clinical record in PostgreSQL
+router.post('/records', authMiddleware, addRecord);
+
+// GET /api/records/patient/:patientId - Direct patient records helper
+router.get('/records/patient/:patientId', authMiddleware, async (req, res) => {
     try {
-        const { patientId, hospitalId, recordType } = req.query;
-        let queryRef = adminDb.collection('clinicalRecords');
+        const { patientId } = req.params;
+        const rows = await queryDb(
+            `SELECT * FROM medical_records 
+             WHERE patient_id = ? OR created_by = ?
+             ORDER BY created_at DESC LIMIT 50`,
+            [patientId, patientId]
+        );
 
-        const targetHospitalId = hospitalId || req.hospitalId;
-        if (targetHospitalId && targetHospitalId !== 'all') {
-            queryRef = queryRef.where('hospitalId', '==', targetHospitalId);
-        }
-
-        if (patientId) {
-            queryRef = queryRef.where('patientId', '==', patientId);
-        }
-
-        const snapshot = await queryRef.get();
-        if (snapshot.empty) {
-            return res.json({ success: true, records: [] });
-        }
-
-        const records = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
+        const records = rows.map(r => ({
+            id: r.id,
+            title: r.title,
+            recordType: r.record_type,
+            category: r.category,
+            patientId: r.patient_id,
+            doctorId: r.doctor_id,
+            hospitalId: r.hospital_id,
+            downloadUrl: r.download_url,
+            fileUrl: r.download_url,
+            r2FileId: r.r2_file_id,
+            fileName: r.file_name,
+            fileSize: r.file_size,
+            fileType: r.file_type,
+            visibilityScope: r.visibility_scope,
+            consentStatus: r.consent_status,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
         }));
 
         res.json({ success: true, records });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message, records: [] });
-    }
-});
-
-// POST /api/records - Create new multi-tenant clinical record in Firestore
-router.post('/records', authMiddleware, async (req, res) => {
-    try {
-        const { 
-            title, data, patientId, patientName, recordType, 
-            fileHash, downloadUrl, metadata, hospitalId, departmentId,
-            visibilityScope = 'hospital_internal', accessRoles = ['doctor', 'clinical', 'hospital_admin'] 
-        } = req.body;
-
-        if (!title) {
-            return res.status(400).json({ success: false, message: 'Record title is required.' });
-        }
-
-        const tenantId = hospitalId || req.hospitalId || 'default_tenant';
-        const docRef = adminDb.collection('clinicalRecords').doc();
-
-        const newRecord = {
-            id: docRef.id,
-            title,
-            recordType: recordType || 'General Clinical Record',
-            patientId: patientId || req.user.uid,
-            patientName: patientName || 'Patient',
-            data: data || '',
-            fileHash: fileHash || '',
-            downloadUrl: downloadUrl || '',
-            metadata: metadata || {},
-            hospitalId: tenantId,
-            tenantId,
-            departmentId: departmentId || req.user.departmentId || 'cardiology',
-            createdBy: req.user.uid,
-            updatedBy: req.user.uid,
-            accessRoles,
-            consentStatus: 'approved',
-            visibilityScope,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        };
-
-        await docRef.set(newRecord);
-
-        // Immutable Audit Log entry
-        await adminDb.collection('auditLogs').add({
-            action: 'CLINICAL_RECORD_CREATE',
-            recordId: docRef.id,
-            hospitalId: tenantId,
-            tenantId,
-            createdBy: req.user.uid,
-            timestamp: new Date().toISOString(),
-            status: 'SUCCESS'
-        });
-
-        res.status(201).json({ success: true, record: newRecord });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
     }
 });
 

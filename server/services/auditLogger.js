@@ -1,14 +1,18 @@
 import crypto from 'crypto';
-import { adminDb } from '../config/firebaseAdmin.js';
+import db, { runDb } from '../config/db.js';
 
 /**
  * HealthChain Structured Enterprise Audit Logging Engine
- * Implements immutable HIPAA-compliant audit trail with automatic secret & PHI redaction.
+ * Implements immutable audit trail in Neon PostgreSQL with automatic secret & PHI redaction.
+ * Strictly adheres to healthcare data security best practices.
  */
 
-const REDACT_KEYS = ['password', 'token', 'secret', 'key', 'privateKey', 'rawBytes', 'ssn', 'creditCard'];
+const REDACT_KEYS = [
+    'password', 'password_hash', 'token', 'secret', 'key', 
+    'privateKey', 'rawBytes', 'ssn', 'creditCard', 'jwt', 'auth'
+];
 
-function redactSensitiveData(data) {
+export function redactSensitiveData(data) {
     if (!data || typeof data !== 'object') return data;
     const sanitized = Array.isArray(data) ? [] : {};
 
@@ -27,48 +31,82 @@ function redactSensitiveData(data) {
 }
 
 export async function writeAuditEvent({
-    userId = 'system',
-    role = 'system',
-    hospitalId = 'hosp_central_01',
-    action = 'UNKNOWN_ACTION',
+    userId = null,
+    role = 'user',
+    hospitalId = null,
+    action = 'SYSTEM_ACTION',
     resourceType = 'system',
     resourceId = '',
     details = {},
     ipAddress = '127.0.0.1',
     userAgent = '',
+    requestId = '',
     status = 'SUCCESS',
     reason = ''
 }) {
     const auditId = `audit_evt_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const sanitizedDetails = redactSensitiveData(details);
+    if (reason) {
+        sanitizedDetails.reason = reason;
+    }
 
     const logRecord = {
         auditId,
-        userId,
+        actor_user_id: userId,
         role,
-        hospitalId,
+        hospital_id: hospitalId,
         action,
-        resourceType,
-        resourceId,
-        details: sanitizedDetails,
-        ipAddress,
-        userAgent,
+        resource_type: resourceType,
+        resource_id: String(resourceId || ''),
         status,
-        reason,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        request_id: requestId || auditId,
+        details: sanitizedDetails,
         timestamp: new Date().toISOString()
     };
 
-    console.log(`[Audit Trail ${status}] Action: ${action} | User: ${userId} (${role}) | Hospital: ${hospitalId}`);
+    console.log(`[Neon PostgreSQL Audit Trail] ${status} | Action: ${action} | User: ${userId || 'anon'} (${role}) | Resource: ${resourceType}/${resourceId || 'N/A'}`);
 
     try {
-        await adminDb.collection('auditLogs').doc(auditId).set(logRecord);
+        await runDb(
+            `INSERT INTO audit_logs (id, actor_user_id, action, resource_type, resource_id, hospital_id, status, ip_address, user_agent, request_id, details, timestamp)
+             VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, CURRENT_TIMESTAMP)`,
+            [
+                userId,
+                action,
+                resourceType,
+                String(resourceId || ''),
+                hospitalId,
+                status,
+                ipAddress,
+                userAgent,
+                requestId || auditId,
+                JSON.stringify(sanitizedDetails)
+            ]
+        );
     } catch (err) {
-        // Dev fallback
+        // Safe non-blocking execution if running in fallback mode
+        try {
+            await runDb(
+                `INSERT INTO audit_logs (id, action, resource_type, resource_id, status, details, timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                [
+                    auditId,
+                    action,
+                    resourceType,
+                    String(resourceId || ''),
+                    status,
+                    JSON.stringify(sanitizedDetails)
+                ]
+            );
+        } catch (fallbackErr) {}
     }
 
     return logRecord;
 }
 
 export default {
-    writeAuditEvent
+    writeAuditEvent,
+    redactSensitiveData
 };

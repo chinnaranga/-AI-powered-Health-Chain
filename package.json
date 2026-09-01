@@ -4,14 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "node server/server.js",
+    "setup": "node server/bootstrap.js",
+    "server": "node server/server.js",
+    "migrate": "node server/config/migrate.js",
     "dev": "NODE_OPTIONS=\"--dns-result-order=ipv4first\" concurrently \"npm run server\" \"vite\"",
     "dev:full": "NODE_OPTIONS=\"--dns-result-order=ipv4first\" concurrently \"npm run chain\" \"npm run server\" \"vite\"",
-    "server": "nodemon --env-file=.env --legacy-watch server/server.js",
     "chain": "hardhat node --config blockchain/hardhat.config.cjs",
     "compile:contract": "hardhat compile --config blockchain/hardhat.config.cjs",
     "deploy:contract": "hardhat run blockchain/scripts/deploy.cjs --network localhost --config blockchain/hardhat.config.cjs",
-    "build": "NODE_OPTIONS=\"--dns-result-order=ipv4first\" vite build",
-    "deploy:firebase": "npm run build && NODE_OPTIONS=\"--dns-result-order=ipv4first\" firebase deploy --only firestore,hosting,storage",
+    "build": "vite build",
+    "deploy:cloudrun": "bash deploy-cloudrun.sh",
+    "deploy:firebase": "npm run build && firebase deploy --only firestore,hosting,storage",
     "lint": "eslint .",
     "preview": "NODE_OPTIONS=\"--dns-result-order=ipv4first\" vite preview"
   },
@@ -39,6 +43,7 @@
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.16.0",
     "nodemon": "^3.1.11",
+    "pg": "^8.23.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.6.0",
@@ -47,6 +52,7 @@
     "react-router-dom": "^6.22.3",
     "recharts": "^3.6.0",
     "sqlite3": "^5.1.7",
+    "ws": "^8.18.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
