@@ -2,6 +2,7 @@ import { apiClient } from './apiClient';
 import { uploadMedicalFileToR2 } from './r2FileService';
 import { uploadToIPFS } from './ipfs';
 import { cryptoService } from './cryptoService';
+import { saveRecordFile } from './recordStorage';
 
 export const recordService = {
     /**
@@ -125,6 +126,13 @@ export const recordService = {
                 id: recordId,
                 ...newRecordPayload
             };
+
+            // Save raw file into secure client-side IndexedDB vault
+            try {
+                await saveRecordFile(recordId, file, file.name);
+            } catch (storeErr) {
+                console.warn('[recordService] IndexedDB save notice:', storeErr.message);
+            }
 
             // Store in persistent local reactive cache for instant UI rendering
             try {

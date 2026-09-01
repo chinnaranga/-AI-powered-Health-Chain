@@ -95,7 +95,7 @@
     "auditTrail": "Audit Trail Logs"
   },
   "clinical": {
-    "dashboardTitle": "Clinical Staff Dashboard",
+    "dashboardTitle": "Clinical Dashboard",
     "patientQueue": "Active Admissions Queue",
     "accessRequests": "Emergency Access Requests",
     "createPatient": "Create Patient Vault",
