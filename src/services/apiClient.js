@@ -10,7 +10,7 @@ export const getApiBaseUrl = () => {
             return envUrl || 'http://localhost:3001/api';
         }
     }
-    return '/api';
+    return envUrl || 'https://healthchain-backend-kz6q.onrender.com/api';
 };
 
 const BASE_URL = getApiBaseUrl();
