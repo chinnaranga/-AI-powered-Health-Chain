@@ -4,10 +4,10 @@ import {
     FileText, Search, Shield, ShieldAlert, CheckCircle,
     Eye, ExternalLink, Brain, Database, X,
     ChevronRight, Activity, ActivitySquare, Pill, FileCode, Plus, Loader2,
-    Users, AlertCircle, RefreshCw, Info
+    Users, AlertCircle, RefreshCw, Info, Lock
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase/config';
 import { onAuthStateChanged } from 'firebase/auth';
 import UploadModal from '../../components/UploadModal';
@@ -94,7 +94,7 @@ function PatientSearchPanel({ onSearch, isLoading, currentPatientId }) {
                     <input
                         value={input}
                         onChange={e => setInput(e.target.value)}
-                        placeholder="Enter Patient UID, email, or Global ID (HCG-XXXXXXXX)..."
+                        placeholder="Enter Patient Email, Phone, Name, or Global ID (HCG-XXXXXXXX)..."
                         className="w-full bg-[#0B0F1A] border border-[#1E2D4580] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-[#4A5568] focus:outline-none focus:border-[#00C8D4]/50 transition-all"
                     />
                     {input && (
@@ -113,7 +113,7 @@ function PatientSearchPanel({ onSearch, isLoading, currentPatientId }) {
             <div className="flex items-start gap-2 mt-3 p-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
                 <Info className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" />
                 <p className="text-[11px] text-[#8899AA] leading-relaxed">
-                    Enter the patient's Firebase UID, email, or <span className="text-teal-400 font-mono font-semibold">Global Health ID (HCG-XXXXXXXX)</span> to view their records. Access is granted only after the patient approves via OTP.
+                    Enter the patient's <span className="text-teal-400 font-semibold">Email</span>, <span className="text-teal-400 font-semibold">Phone Number</span>, <span className="text-teal-400 font-semibold">Full Name</span>, or <span className="text-teal-400 font-mono font-semibold">Global Health ID (HCG-XXXXXXXX)</span> to view their records. Access is granted only after the patient approves via OTP.
                 </p>
             </div>
         </div>
@@ -234,54 +234,59 @@ export default function DoctorRecordsPage() {
         setRecords([]);
         setSelectedRecord(null);
 
-        let resolvedPatientId = searchTerm;
+        const rawTerm = searchTerm.trim();
+        const lowerTerm = rawTerm.toLowerCase();
+        const upperTerm = rawTerm.toUpperCase();
+        const cleanPhone = rawTerm.replace(/[^0-9]/g, '');
 
-        if (searchTerm.includes('@')) {
-            try {
-                const userQ = query(collection(db, 'users'), where('email', '==', searchTerm.toLowerCase()));
-                const userSnap = await getDocs(userQ);
-                if (!userSnap.empty) {
-                    resolvedPatientId = userSnap.docs[0].id;
-                } else {
-                    setFetchError('No patient found with that email address.');
-                    setIsLoading(false);
-                    return;
-                }
-            } catch (err) {
-                console.error('[DoctorRecords] Email resolution error:', err);
-                setFetchError('Failed to resolve email to UID.');
-                setIsLoading(false);
-                return;
-            }
-        } else if (searchTerm.toUpperCase().startsWith('HCG-')) {
-            // Resolve Global Patient ID → Firebase UID
-            try {
-                const globalId = searchTerm.toUpperCase().trim();
-                // Try users collection first
-                const userQ = query(collection(db, 'users'), where('globalPatientId', '==', globalId));
-                const userSnap = await getDocs(userQ);
-                if (!userSnap.empty) {
-                    resolvedPatientId = userSnap.docs[0].id;
-                } else {
-                    // Fallback: try patients collection
-                    const patientQ = query(collection(db, 'patients'), where('globalPatientId', '==', globalId));
-                    const patientSnap = await getDocs(patientQ);
-                    if (!patientSnap.empty) {
-                        const patientData = patientSnap.docs[0].data();
-                        // Use the linked UID if available, else use the doc ID as patientId
-                        resolvedPatientId = patientData.uid || patientSnap.docs[0].id;
-                    } else {
-                        setFetchError('No patient found with that Global Health ID.');
-                        setIsLoading(false);
-                        return;
+        let resolvedPatientId = rawTerm;
+        const searchIds = [rawTerm, lowerTerm, upperTerm];
+        if (cleanPhone.length >= 8) searchIds.push(cleanPhone);
+
+        try {
+            // Check direct user doc
+            const directSnap = await getDoc(doc(db, 'users', rawTerm));
+            if (directSnap.exists()) {
+                const d = directSnap.data();
+                resolvedPatientId = directSnap.id;
+                if (d.globalPatientId) searchIds.push(d.globalPatientId);
+                if (d.email) searchIds.push(d.email.toLowerCase());
+                if (d.phone) searchIds.push(d.phone.replace(/[^0-9]/g, ''));
+            } else {
+                // Search across all users
+                const usersSnap = await getDocs(query(collection(db, 'users')));
+                for (const docSnap of usersSnap.docs) {
+                    const d = docSnap.data();
+                    const docEmail = (d.email || '').toLowerCase();
+                    const docPhone = (d.phone || '').replace(/[^0-9]/g, '');
+                    const docEmergencyPhone = (d.emergencyContactPhone || '').replace(/[^0-9]/g, '');
+                    const docName = (d.fullName || d.displayName || d.name || '').toLowerCase();
+                    const docGlobalId = (d.globalPatientId || '').toUpperCase();
+                    const docAbhaId = (d.abhaId || '').toUpperCase();
+                    const docPatientId = (d.patientId || '').toUpperCase();
+                    const docAccessCode = d.accessCode ? String(d.accessCode) : '';
+
+                    const matchesEmail = rawTerm.includes('@') && docEmail === lowerTerm;
+                    const matchesPhone = cleanPhone.length >= 8 && (docPhone.includes(cleanPhone.slice(-8)) || docEmergencyPhone.includes(cleanPhone.slice(-8)));
+                    const matchesName = rawTerm.length >= 3 && !rawTerm.includes('@') && docName.includes(lowerTerm);
+                    const matchesGlobalId = docGlobalId === upperTerm;
+                    const matchesAbha = docAbhaId === upperTerm;
+                    const matchesPatientId = docPatientId === upperTerm;
+                    const matchesCode = docAccessCode === rawTerm;
+                    const matchesDocId = docSnap.id === rawTerm;
+
+                    if (matchesEmail || matchesPhone || matchesName || matchesGlobalId || matchesAbha || matchesPatientId || matchesCode || matchesDocId) {
+                        resolvedPatientId = docSnap.id;
+                        searchIds.push(docSnap.id);
+                        if (d.globalPatientId) searchIds.push(d.globalPatientId);
+                        if (d.email) searchIds.push(d.email.toLowerCase());
+                        if (d.phone) searchIds.push(d.phone.replace(/[^0-9]/g, ''));
+                        break;
                     }
                 }
-            } catch (err) {
-                console.error('[DoctorRecords] Global ID resolution error:', err);
-                setFetchError('Failed to resolve Global Health ID.');
-                setIsLoading(false);
-                return;
             }
+        } catch (err) {
+            console.warn('[DoctorRecords] ID resolution notice:', err.message);
         }
 
         const doctorUid = auth.currentUser?.uid || currentUser?.uid;
@@ -295,16 +300,20 @@ export default function DoctorRecordsPage() {
         const sessionQ = query(
             collection(db, 'activeSessions'),
             where('doctorId', '==', doctorUid),
-            where('patientId', '==', resolvedPatientId),
             where('active', '==', true)
         );
 
         let recordsUnsub = null;
 
         const sessionUnsub = onSnapshot(sessionQ, (sessionSnap) => {
+            const matchingSession = sessionSnap.docs.find(d => {
+                const s = d.data();
+                return searchIds.includes(s.patientId) || (s.globalPatientId && searchIds.includes(s.globalPatientId));
+            });
+
             let hasValidSession = false;
-            if (!sessionSnap.empty) {
-                const sessionData = sessionSnap.docs[0].data();
+            if (matchingSession) {
+                const sessionData = matchingSession.data();
                 const expiry = sessionData.expiresAt?.toDate ? sessionData.expiresAt.toDate() : new Date(sessionData.expiresAt);
                 if (expiry > new Date()) {
                     hasValidSession = true;
@@ -325,15 +334,13 @@ export default function DoctorRecordsPage() {
                 // Initialize records subscription if not already active
                 if (!recordsUnsub) {
                     setFetchError(null);
-                    const q = query(
-                        collection(db, 'records'),
-                        where('patientId', '==', resolvedPatientId)
-                    );
+                    const q = query(collection(db, 'records'));
 
                     recordsUnsub = onSnapshot(q,
                         (snapshot) => {
                             const formatted = snapshot.docs
                                 .map(formatRecord)
+                                .filter(r => searchIds.includes(r.patientId) || searchIds.includes(r.globalPatientId))
                                 .sort((a, b) => b.timestamp - a.timestamp);
                             setRecords(formatted);
                             setIsLoading(false);
@@ -442,9 +449,14 @@ export default function DoctorRecordsPage() {
                             </div>
                         ) : fetchError ? (
                             <div className="flex flex-col items-center justify-center py-20 gap-3">
-                                <AlertCircle className="w-10 h-10 text-red-400" />
-                                <p className="text-white font-semibold">Permission Error</p>
-                                <p className="text-xs text-[#8899AA] max-w-xs text-center">{fetchError}</p>
+                                <AlertCircle className="w-10 h-10 text-amber-400" />
+                                <p className="text-white font-semibold">Access Authorization Required</p>
+                                <p className="text-xs text-[#8899AA] max-w-sm text-center">{fetchError}</p>
+                                <button
+                                    onClick={() => navigate(`/doctor/patient-access`)}
+                                    className="mt-2 px-5 py-2.5 rounded-xl bg-[#00C8D4] hover:bg-[#00E5F0] text-[#0B0F1A] font-bold text-xs flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(0,200,212,0.25)]">
+                                    <Lock className="w-3.5 h-3.5" /> Request Access via OTP
+                                </button>
                             </div>
                         ) : !hasSearched ? (
                             <div className="flex flex-col items-center justify-center py-20 gap-4">

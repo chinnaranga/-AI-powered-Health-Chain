@@ -157,6 +157,7 @@ export default function DoctorRegister() {
                 license: form.license
             };
             await register(payload);
+            sessionStorage.setItem('hc_is_new_user', 'true');
             setShowSuccess(true);
             toast.success('Doctor Node enrolled. Proceeding to onboarding...');
             setTimeout(() => navigate('/dashboard/doctor/onboarding', { replace: true }), 1500);
@@ -200,6 +201,7 @@ export default function DoctorRegister() {
                 });
             }
 
+            sessionStorage.setItem('hc_is_new_user', 'true');
             localStorage.setItem('hc_token', data.token);
             localStorage.setItem('hc_role', data.role);
             if (data.walletAddress) localStorage.setItem('hc_wallet', data.walletAddress);

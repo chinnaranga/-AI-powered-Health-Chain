@@ -67,22 +67,8 @@ export default function PatientLogin() {
                 const res = await login(email, password, 'patient');
                 const user = res?.user || useAuthStore.getState().user;
                 
-                const savedProfile = (() => {
-                    try {
-                        const raw = localStorage.getItem('hc_patient_profile');
-                        return raw ? JSON.parse(raw) : null;
-                    } catch (e) { return null; }
-                })();
-
-                const isCompleted = user?.onboardingComplete || savedProfile?.onboardingComplete || savedProfile?.dob;
-
-                if (!isCompleted) {
-                    toast.success('Welcome! Please complete your patient onboarding.');
-                    navigate('/patient/onboarding');
-                } else {
-                    toast.success('Successfully logged in');
-                    navigate('/patient/dashboard');
-                }
+                toast.success('Successfully logged in');
+                navigate('/patient/dashboard');
             } catch (err) {
                 if (err.message?.startsWith('ROLE_MISMATCH:')) {
                     const storedRole = err.message.split(':')[1];
@@ -139,25 +125,9 @@ export default function PatientLogin() {
             const fullPhone = `${selectedCountry.dial}${phone}`;
             localStorage.setItem('hc_phone', fullPhone);
             const { verifyPhoneOtp } = useAuthStore.getState();
-            const res = await verifyPhoneOtp(confirmationResult || { phoneNumber: fullPhone }, code, 'patient');
-            const user = res?.user || useAuthStore.getState().user;
-
-            const savedProfile = (() => {
-                try {
-                    const raw = localStorage.getItem('hc_patient_profile');
-                    return raw ? JSON.parse(raw) : null;
-                } catch (e) { return null; }
-            })();
-
-            const isCompleted = user?.onboardingComplete || savedProfile?.onboardingComplete || savedProfile?.dob;
-
-            if (!isCompleted) {
-                toast.success('Welcome! Please complete your patient onboarding.');
-                navigate('/patient/onboarding');
-            } else {
-                toast.success('Successfully logged in');
-                navigate('/patient/dashboard');
-            }
+            await verifyPhoneOtp(confirmationResult || { phoneNumber: fullPhone }, code, 'patient');
+            toast.success('Successfully logged in');
+            navigate('/patient/dashboard');
         } catch (err) {
             if (err.message?.startsWith('ROLE_MISMATCH:')) {
                 const storedRole = err.message.split(':')[1];
@@ -193,25 +163,9 @@ export default function PatientLogin() {
                 localStorage.setItem('hc_photo', googleUser.photoURL);
             }
 
-            const res = await loginGoogle('patient', googleUser);
-            const user = res?.user || useAuthStore.getState().user;
-
-            const savedProfile = (() => {
-                try {
-                    const raw = localStorage.getItem('hc_patient_profile');
-                    return raw ? JSON.parse(raw) : null;
-                } catch (e) { return null; }
-            })();
-
-            const isCompleted = !!(user?.onboardingComplete || savedProfile?.onboardingComplete || savedProfile?.dob);
-
-            if (!isCompleted) {
-                toast.success(`Welcome, ${googleUser?.displayName?.split(' ')[0] || 'Patient'}! Please complete your onboarding profile.`);
-                navigate('/patient/onboarding');
-            } else {
-                toast.success('Successfully logged in with Google');
-                navigate('/patient/dashboard');
-            }
+            await loginGoogle('patient', googleUser);
+            toast.success('Successfully logged in with Google');
+            navigate('/patient/dashboard');
         } catch (err) {
             if (err.message?.startsWith('ROLE_MISMATCH:')) {
                 const storedRole = err.message.split(':')[1];

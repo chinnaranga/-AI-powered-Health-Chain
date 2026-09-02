@@ -159,6 +159,7 @@ export default function PatientRegister() {
                 phone: form.phone,
             };
             await register(payload);
+            sessionStorage.setItem('hc_is_new_user', 'true');
             setShowSuccess(true);
             toast.success('Patient account initialized. Proceeding to onboarding...');
             setTimeout(() => navigate('/patient/onboarding', { replace: true }), 1500);
@@ -196,6 +197,7 @@ export default function PatientRegister() {
                 data = await googleAuthFallback(user, 'patient');
             }
 
+            sessionStorage.setItem('hc_is_new_user', 'true');
             localStorage.setItem('hc_token', data.token);
             localStorage.setItem('hc_role', data.role);
             if (user.displayName) localStorage.setItem('hc_name', user.displayName);

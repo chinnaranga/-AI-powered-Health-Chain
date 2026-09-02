@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     FileText, Users, Upload, Activity, Shield, Clock, CheckCircle,
@@ -614,6 +615,8 @@ function RecordsTable({ records, isLoading }) {
 /* ───── PAGE ───── */
 export default function PatientDashboard() {
     const { t } = useTranslation();
+    const navigate = useNavigate();
+    const { user } = useAuthStore();
     const [isUnlocked, setIsUnlocked] = useState(true);
     const { records, isLoading: recordsLoading } = useRecords();
     const [doctors, setDoctors] = useState([]);
@@ -674,6 +677,31 @@ export default function PatientDashboard() {
                 <h1 className="text-3xl font-display font-bold text-white">{t('patient.dashboardTitle')}</h1>
                 <p className="text-sm text-[#8899AA] mt-1">Manage, monitor, and secure your medical records on an immutable blockchain network.</p>
             </div>
+
+            {/* Non-intrusive missing profile notification banner for existing users */}
+            {(!user?.phone || !user?.bloodGroup || !user?.dob || !user?.emergencyContactName || !user?.profileComplete) && (
+                <motion.div
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_30px_rgba(245,158,11,0.05)]"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                            <AlertCircle className="w-5 h-5 text-amber-400" />
+                        </div>
+                        <div className="text-left">
+                            <p className="text-sm font-semibold text-white">Profile Details Pending</p>
+                            <p className="text-xs text-amber-300/80">Some profile details (blood group, emergency contact, or phone) are missing.</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => navigate('/patient/profile')}
+                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0F1A] font-bold text-xs transition-all flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.2)] whitespace-nowrap cursor-pointer"
+                    >
+                        Complete Profile <ArrowUpRight className="w-3.5 h-3.5" />
+                    </button>
+                </motion.div>
+            )}
 
             <StatCards
                 recordCount={recordCount}

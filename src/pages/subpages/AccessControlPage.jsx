@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
+import useAuthStore from '../../store/authStore';
 
 /* ───── KPI Summary Cards ───── */
 function KPISummary({ activeSessionsCount, pendingCount }) {
@@ -53,7 +54,9 @@ function KPISummary({ activeSessionsCount, pendingCount }) {
 
 /* ───── PAGE ───── */
 const AccessControlPage = () => {
+    const { user: storeUser } = useAuthStore();
     const [userId, setUserId] = useState(null);
+    const [patientIdentifiers, setPatientIdentifiers] = useState([]);
     const [requests, setRequests] = useState([]);
     const [otpSessions, setOtpSessions] = useState([]);
     const [activeSessions, setActiveSessions] = useState([]);
@@ -62,25 +65,60 @@ const AccessControlPage = () => {
     const [currentTime, setCurrentTime] = useState(Date.now() / 1000);
     const [selfAccessCode, setSelfAccessCode] = useState(null);
 
-    // Listen to patient's own self-generated accessCode
+    // 1. Auth state & identifier aggregation
+    useEffect(() => {
+        const unsub = onAuthStateChanged(auth, (user) => {
+            const uid = user?.uid || storeUser?.uid || storeUser?.id || localStorage.getItem('hc_patient_id') || 'patient_user';
+            const email = user?.email || storeUser?.email || localStorage.getItem('hc_email') || '';
+            const globalId = storeUser?.globalPatientId || localStorage.getItem('hc_global_id') || '';
+            const abha = storeUser?.abhaId || '';
+            
+            setUserId(uid);
+            const ids = Array.from(new Set([uid, storeUser?.id, email, globalId, abha].filter(Boolean)));
+            setPatientIdentifiers(ids);
+        });
+
+        if (storeUser) {
+            const uid = storeUser.uid || storeUser.id || 'patient_user';
+            const email = storeUser.email || localStorage.getItem('hc_email') || '';
+            const globalId = storeUser.globalPatientId || localStorage.getItem('hc_global_id') || '';
+            const ids = Array.from(new Set([uid, storeUser.id, email, globalId].filter(Boolean)));
+            setUserId(uid);
+            setPatientIdentifiers(ids);
+        }
+
+        return () => unsub();
+    }, [storeUser]);
+
+    // Listen to patient's own profile and self-generated accessCode
     useEffect(() => {
         if (!userId) return;
         const userRef = doc(db, 'users', userId);
         const unsub = onSnapshot(userRef, (snap) => {
             if (snap.exists()) {
-                setSelfAccessCode(snap.data().accessCode || null);
+                const data = snap.data();
+                const code = data.accessCode || null;
+                setSelfAccessCode(code);
+
+                const dynamicIds = [
+                    userId,
+                    data.uid,
+                    data.email,
+                    data.phone,
+                    data.fullName,
+                    data.displayName,
+                    data.name,
+                    data.globalPatientId,
+                    data.patientId,
+                    data.abhaId,
+                    code
+                ].filter(Boolean);
+
+                setPatientIdentifiers(prev => Array.from(new Set([...prev, ...dynamicIds])));
             }
         });
         return () => unsub();
     }, [userId]);
-
-    // 1. Auth state
-    useEffect(() => {
-        const unsub = onAuthStateChanged(auth, (user) => {
-            setUserId(user?.uid ?? null);
-        });
-        return () => unsub();
-    }, []);
 
     // Timer for ticking expiration
     useEffect(() => {
@@ -88,34 +126,46 @@ const AccessControlPage = () => {
         return () => clearInterval(t);
     }, []);
 
-    // 2. Listen to Access Requests
+    // 2. Listen to Access Requests across all patient identifiers
     useEffect(() => {
-        if (!userId) return;
-        const unsub = accessRequestService.listenToPatientRequests(userId, (fetchedRequests) => {
+        const ids = patientIdentifiers.length > 0 ? patientIdentifiers : [userId].filter(Boolean);
+        if (ids.length === 0) return;
+
+        const unsub = accessRequestService.listenToPatientRequests(ids, (fetchedRequests) => {
             setRequests(fetchedRequests);
         });
         return () => unsub();
-    }, [userId]);
+    }, [userId, patientIdentifiers]);
 
     // 3. Listen to OTP Sessions for this patient
     useEffect(() => {
-        if (!userId) return;
-        const q = query(collection(db, 'otpSessions'), where('patientId', '==', userId), where('active', '==', true));
+        const ids = patientIdentifiers.length > 0 ? patientIdentifiers : [userId].filter(Boolean);
+        if (ids.length === 0) return;
+
+        const q = query(collection(db, 'otpSessions'), where('active', '==', true));
         const unsub = onSnapshot(q, (snap) => {
-            setOtpSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            const matching = snap.docs
+                .map(d => ({ id: d.id, ...d.data() }))
+                .filter(s => ids.includes(s.patientId) || (s.globalPatientId && ids.includes(s.globalPatientId)));
+            setOtpSessions(matching);
         });
         return () => unsub();
-    }, [userId]);
+    }, [userId, patientIdentifiers]);
 
     // 4. Listen to Active Sessions
     useEffect(() => {
-        if (!userId) return;
-        const q = query(collection(db, 'activeSessions'), where('patientId', '==', userId), where('active', '==', true));
+        const ids = patientIdentifiers.length > 0 ? patientIdentifiers : [userId].filter(Boolean);
+        if (ids.length === 0) return;
+
+        const q = query(collection(db, 'activeSessions'), where('active', '==', true));
         const unsub = onSnapshot(q, (snap) => {
-            setActiveSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            const matching = snap.docs
+                .map(d => ({ id: d.id, ...d.data() }))
+                .filter(s => ids.includes(s.patientId) || (s.globalPatientId && ids.includes(s.globalPatientId)));
+            setActiveSessions(matching);
         });
         return () => unsub();
-    }, [userId]);
+    }, [userId, patientIdentifiers]);
 
     const handleApprove = async (requestId) => {
         setProcessingId(requestId);

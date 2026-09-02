@@ -127,6 +127,19 @@ export const recordService = {
                 ...newRecordPayload
             };
 
+            // 7. Save to Firestore records collection for real-time multi-device sync
+            try {
+                const { db } = await import('../firebase/config');
+                const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+                await setDoc(doc(db, 'records', recordId), {
+                    ...newRecordPayload,
+                    id: recordId,
+                    createdAt: serverTimestamp()
+                }, { merge: true });
+            } catch (fsErr) {
+                console.warn('[recordService] Firestore sync notice:', fsErr.message);
+            }
+
             // Save raw file into secure client-side IndexedDB vault
             try {
                 await saveRecordFile(recordId, file, file.name);

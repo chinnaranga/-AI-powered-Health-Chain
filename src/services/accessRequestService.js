@@ -14,12 +14,16 @@ export const accessRequestService = {
             );
 
             const requestData = sanitize({
-                doctorId: doctorInfo.uid,
-                doctorName: doctorInfo.displayName || 'Dr. Unknown',
+                doctorId: doctorInfo.uid || doctorInfo.id,
+                doctorName: doctorInfo.displayName || doctorInfo.name || 'Dr. Attending Physician',
                 doctorEmail: doctorInfo.email || '',
                 patientId: patientId,
+                globalPatientId: details.globalPatientId || (patientId?.startsWith('HCG-') ? patientId : null),
+                patientEmail: details.patientEmail || (patientId?.includes('@') ? patientId : null),
+                patientPhone: details.patientPhone || null,
+                patientName: details.patientName || null,
                 hospital: details.hospital || 'HealthChain Central',
-                department: details.department || 'General',
+                department: details.department || 'General Medicine',
                 reason: details.reason || 'Medical Consultation',
                 duration: details.duration || '1 hour',
                 urgency: details.urgency || 'Normal',
@@ -30,9 +34,11 @@ export const accessRequestService = {
             const docRef = await addDoc(collection(db, 'accessRequests'), requestData);
             
             // Log to audit
-            await this.logAuditActivity('ACCESS_REQUEST_CREATED', doctorInfo.uid, {
+            await this.logAuditActivity('ACCESS_REQUEST_CREATED', doctorInfo.uid || doctorInfo.id, {
                 requestId: docRef.id,
                 patientId,
+                patientEmail: details.patientEmail,
+                patientPhone: details.patientPhone,
                 urgency: details.urgency || 'Normal'
             });
 
@@ -53,16 +59,42 @@ export const accessRequestService = {
         });
     },
 
-    // PATIENT: Listen to incoming pending requests
-    listenToPatientRequests(patientId, callback) {
+    // PATIENT: Listen to incoming pending requests across all matching identifiers (Email, Phone, Name, Global ID, UID)
+    listenToPatientRequests(patientIdentifiers, callback) {
+        const idList = (Array.isArray(patientIdentifiers) ? patientIdentifiers : [patientIdentifiers])
+            .filter(Boolean)
+            .map(id => String(id).trim().toLowerCase());
+
+        if (idList.length === 0) return () => {};
+
         const q = query(
             collection(db, 'accessRequests'), 
-            where('patientId', '==', patientId),
             where('status', 'in', ['pending', 'approved'])
         );
         return onSnapshot(q, (snapshot) => {
-            const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const requests = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(r => {
+                    const reqPatientId = (r.patientId || '').toLowerCase();
+                    const reqGlobalId = (r.globalPatientId || '').toLowerCase();
+                    const reqEmail = (r.patientEmail || '').toLowerCase();
+                    const reqPhone = (r.patientPhone || '').replace(/[^0-9]/g, '');
+                    const reqName = (r.patientName || '').toLowerCase();
+
+                    return idList.some(id => {
+                        const cleanId = id.replace(/[^0-9]/g, '');
+                        return (
+                            id === reqPatientId ||
+                            id === reqGlobalId ||
+                            id === reqEmail ||
+                            (reqName && reqName.includes(id)) ||
+                            (cleanId.length >= 8 && reqPhone.includes(cleanId.slice(-8)))
+                        );
+                    });
+                });
             callback(requests);
+        }, (err) => {
+            console.warn('[accessRequestService] Realtime sync notice:', err.message);
         });
     },
 

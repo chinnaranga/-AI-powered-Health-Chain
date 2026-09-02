@@ -99,7 +99,7 @@ const doctorNavItems = [
 
 const clinicalNavItems = [
     // CORE
-    { to: '', icon: LayoutDashboard, label: 'Dashboard', section: 'CORE', end: true, isAlwaysActive: true },
+    { to: '', icon: LayoutDashboard, label: 'Clinical Dashboard', section: 'CORE', end: true, isAlwaysActive: true },
     { to: '/clinical/ai', icon: Brain, label: 'AI Assistant', section: 'CORE', isAlwaysActive: true },
     { to: 'requests', icon: CheckCircle, label: 'Access Requests', section: 'CORE', isAlwaysActive: true },
     { to: 'create-patient', icon: UserPlus, label: 'Create Patient', section: 'CORE', isAlwaysActive: true },
@@ -194,7 +194,7 @@ export default function Sidebar({ basePath = '/dashboard/patient', sidebarOpen, 
         if (item.translationKey) return t(item.translationKey);
         if (item.isAction && item.id) return t(`patient.${item.id}`);
         
-        const sectionPrefix = isDoctor ? 'doctor' : (role === 'clinical' ? 'clinical' : 'patient');
+        const sectionPrefix = role === 'clinical' ? 'clinical' : (role === 'doctor' ? 'doctor' : 'patient');
         
         // Remove leading slash if it is an absolute route like '/patient/ai'
         let cleanPath = item.to || '';
@@ -209,10 +209,7 @@ export default function Sidebar({ basePath = '/dashboard/patient', sidebarOpen, 
         const translated = t(dictKey);
         if (translated && translated !== dictKey) return translated;
         
-        if (item.to === '') {
-            return t('common.overview');
-        }
-        return item.label;
+        return item.label || t('common.overview');
     };
 
     const renderActiveItem = (item) => {

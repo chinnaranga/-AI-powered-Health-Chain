@@ -44,35 +44,44 @@ export default function AuthGuard({ children, basePath }) {
             return;
         }
 
-        // When onboarding feature flag is false or user has completed profile, consider profile complete
+        // Check if user is a brand new registrant requiring initial onboarding
+        const isNewUser = user?.isNewUser === true || sessionStorage.getItem('hc_is_new_user') === 'true';
         const isProfileComplete = FEATURES.onboarding === false ? true : (user?.profileComplete === true || user?.onboardingComplete === true);
 
-        // 1. Handle onboarding route specific rules first
+        // 1. Handle onboarding route rules
         if (role === 'patient') {
-            if (!isProfileComplete) {
-                if (currentPath !== '/onboarding' && currentPath !== '/dashboard/patient/onboarding') {
-                    console.info('[AuthGuard] Patient profile incomplete, redirecting to onboarding.');
-                    navigate('/onboarding', { replace: true });
+            // ONLY redirect to onboarding if this is a newly registered user who has never set up their profile
+            if (isNewUser && !isProfileComplete) {
+                if (currentPath !== '/onboarding' && currentPath !== '/dashboard/patient/onboarding' && currentPath !== '/patient/onboarding') {
+                    console.info('[AuthGuard] New patient registration, navigating to initial onboarding.');
+                    navigate('/patient/onboarding', { replace: true });
                     return;
                 }
-                // Allow user to stay on /onboarding page while completing profile
-                if (currentPath === '/onboarding' || currentPath === '/dashboard/patient/onboarding') {
+                if (currentPath === '/onboarding' || currentPath === '/dashboard/patient/onboarding' || currentPath === '/patient/onboarding') {
                     return;
                 }
             } else {
-                if (currentPath === '/onboarding') {
-                    console.info('[AuthGuard] Patient profile complete. Proceeding to verification check or dashboard.');
+                // Existing user: Do NOT force redirect to onboarding.
+                // If profile is missing details, notify the user once per session.
+                if (!isProfileComplete && !sessionStorage.getItem('hc_profile_notice_sent')) {
+                    sessionStorage.setItem('hc_profile_notice_sent', 'true');
+                    toast.info('Profile Notice: Some health profile details are pending. You can update them anytime in Profile Settings.');
                 }
             }
         } else if (role === 'doctor') {
-            if (!isProfileComplete) {
-                if (currentPath !== '/dashboard/doctor/onboarding') {
-                    console.info('[AuthGuard] Doctor profile incomplete, redirecting to onboarding.');
-                    navigate('/dashboard/doctor/onboarding', { replace: true });
+            if (isNewUser && !isProfileComplete) {
+                if (currentPath !== '/dashboard/doctor/onboarding' && currentPath !== '/doctor/onboarding') {
+                    console.info('[AuthGuard] New doctor registration, navigating to onboarding.');
+                    navigate('/doctor/onboarding', { replace: true });
                     return;
                 }
-                if (currentPath === '/dashboard/doctor/onboarding') {
+                if (currentPath === '/dashboard/doctor/onboarding' || currentPath === '/doctor/onboarding') {
                     return;
+                }
+            } else {
+                if (!isProfileComplete && !sessionStorage.getItem('hc_doc_profile_notice_sent')) {
+                    sessionStorage.setItem('hc_doc_profile_notice_sent', 'true');
+                    toast.info('Profile Notice: You can complete missing clinical details in Doctor Settings.');
                 }
             }
         } else if (role === 'clinical') {
@@ -133,16 +142,16 @@ export default function AuthGuard({ children, basePath }) {
             isAuthorized = false;
         } else {
             if (role === 'patient') {
-                if (currentPath === '/onboarding' || currentPath === '/dashboard/patient/onboarding') {
-                    isAuthorized = !isProfileComplete || currentPath === '/dashboard/patient/onboarding';
-                } else {
-                    isAuthorized = isProfileComplete && (!expectedRole || role === expectedRole);
-                }
-            } else if (role === 'doctor') {
-                if (currentPath === '/dashboard/doctor/onboarding') {
+                if (currentPath === '/onboarding' || currentPath === '/dashboard/patient/onboarding' || currentPath === '/patient/onboarding') {
                     isAuthorized = true;
                 } else {
-                    isAuthorized = isProfileComplete && (!expectedRole || role === expectedRole);
+                    isAuthorized = (!expectedRole || role === expectedRole);
+                }
+            } else if (role === 'doctor') {
+                if (currentPath === '/dashboard/doctor/onboarding' || currentPath === '/doctor/onboarding') {
+                    isAuthorized = true;
+                } else {
+                    isAuthorized = (!expectedRole || role === expectedRole);
                 }
             } else if (role === 'clinical') {
                 if (currentPath !== '/onboarding' && currentPath !== '/dashboard/patient/onboarding' && currentPath !== '/dashboard/doctor/onboarding') {

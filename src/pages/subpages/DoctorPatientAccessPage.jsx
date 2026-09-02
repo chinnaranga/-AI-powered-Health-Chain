@@ -86,32 +86,112 @@ export default function DoctorPatientAccessPage() {
         }
     }, [status, currentUser, searchedId]);
 
+    const resolvePatientDetails = async (searchTerm) => {
+        if (!searchTerm) return { uid: null, globalPatientId: null, email: null, phone: null, fullName: null };
+        const rawTerm = searchTerm.trim();
+        const lowerTerm = rawTerm.toLowerCase();
+        const upperTerm = rawTerm.toUpperCase();
+        const cleanPhone = rawTerm.replace(/[^0-9]/g, '');
+
+        let resolved = {
+            uid: rawTerm,
+            globalPatientId: rawTerm.startsWith('HCG-') ? rawTerm : null,
+            email: rawTerm.includes('@') ? lowerTerm : null,
+            phone: cleanPhone.length >= 8 ? cleanPhone : null,
+            fullName: !rawTerm.includes('@') && !rawTerm.startsWith('HCG-') && cleanPhone.length < 8 ? rawTerm : null
+        };
+
+        // 1. Direct UID check in users collection
+        try {
+            const snap = await getDoc(doc(db, 'users', rawTerm));
+            if (snap.exists()) {
+                const d = snap.data();
+                return {
+                    uid: snap.id,
+                    globalPatientId: d.globalPatientId || snap.id,
+                    email: d.email || '',
+                    phone: d.phone || '',
+                    fullName: d.fullName || d.displayName || ''
+                };
+            }
+        } catch (e) {}
+
+        // 2. Comprehensive Multi-Attribute Search in users & patients collections
+        try {
+            const usersSnap = await getDocs(query(collection(db, 'users')));
+            for (const docSnap of usersSnap.docs) {
+                const d = docSnap.data();
+                const docEmail = (d.email || '').toLowerCase();
+                const docPhone = (d.phone || '').replace(/[^0-9]/g, '');
+                const docEmergencyPhone = (d.emergencyContactPhone || '').replace(/[^0-9]/g, '');
+                const docName = (d.fullName || d.displayName || d.name || '').toLowerCase();
+                const docGlobalId = (d.globalPatientId || '').toUpperCase();
+                const docAbhaId = (d.abhaId || '').toUpperCase();
+                const docPatientId = (d.patientId || '').toUpperCase();
+                const docAccessCode = d.accessCode ? String(d.accessCode) : '';
+
+                const matchesEmail = rawTerm.includes('@') && docEmail === lowerTerm;
+                const matchesPhone = cleanPhone.length >= 8 && (docPhone.includes(cleanPhone.slice(-8)) || docEmergencyPhone.includes(cleanPhone.slice(-8)));
+                const matchesName = rawTerm.length >= 3 && !rawTerm.includes('@') && docName.includes(lowerTerm);
+                const matchesGlobalId = docGlobalId === upperTerm;
+                const matchesAbha = docAbhaId === upperTerm;
+                const matchesPatientId = docPatientId === upperTerm;
+                const matchesCode = docAccessCode === rawTerm;
+                const matchesDocId = docSnap.id === rawTerm;
+
+                if (matchesEmail || matchesPhone || matchesName || matchesGlobalId || matchesAbha || matchesPatientId || matchesCode || matchesDocId) {
+                    return {
+                        uid: docSnap.id,
+                        globalPatientId: d.globalPatientId || docSnap.id,
+                        email: d.email || '',
+                        phone: d.phone || '',
+                        fullName: d.fullName || d.displayName || ''
+                    };
+                }
+            }
+
+            const patientsSnap = await getDocs(query(collection(db, 'patients')));
+            for (const docSnap of patientsSnap.docs) {
+                const d = docSnap.data();
+                const docEmail = (d.email || '').toLowerCase();
+                const docPhone = (d.phone || '').replace(/[^0-9]/g, '');
+                const docName = (d.fullName || d.name || '').toLowerCase();
+                const docGlobalId = (d.globalPatientId || '').toUpperCase();
+                const docPatientId = (d.patientId || '').toUpperCase();
+
+                const matchesEmail = rawTerm.includes('@') && docEmail === lowerTerm;
+                const matchesPhone = cleanPhone.length >= 8 && docPhone.includes(cleanPhone.slice(-8));
+                const matchesName = rawTerm.length >= 3 && !rawTerm.includes('@') && docName.includes(lowerTerm);
+                const matchesGlobalId = docGlobalId === upperTerm;
+                const matchesPatientId = docPatientId === upperTerm;
+
+                if (matchesEmail || matchesPhone || matchesName || matchesGlobalId || matchesPatientId) {
+                    return {
+                        uid: d.uid || docSnap.id,
+                        globalPatientId: d.globalPatientId || docSnap.id,
+                        email: d.email || '',
+                        phone: d.phone || '',
+                        fullName: d.fullName || d.name || ''
+                    };
+                }
+            }
+        } catch (e) {
+            console.warn('[DoctorAccess] User lookup notice:', e.message);
+        }
+
+        return resolved;
+    };
+
+    const [resolvedPatient, setResolvedPatient] = useState(null);
+
     const checkAccess = async (searchTerm) => {
         if (!searchTerm || !currentUser) return;
         setLoading(true);
         setStatus('CHECKING');
         
-        let uid = searchTerm;
-        if (searchTerm.includes('@')) {
-            try {
-                const userQ = query(collection(db, 'users'), where('email', '==', searchTerm.toLowerCase()));
-                const userSnap = await getDocs(userQ);
-                if (!userSnap.empty) {
-                    uid = userSnap.docs[0].id;
-                } else {
-                    toast.error('No patient found with that email.');
-                    setStatus('IDLE');
-                    setLoading(false);
-                    return;
-                }
-            } catch (err) {
-                toast.error('Failed to resolve email.');
-                setStatus('IDLE');
-                setLoading(false);
-                return;
-            }
-        }
-        
+        const details = await resolvePatientDetails(searchTerm);
+        const uid = details.uid || searchTerm;
+        setResolvedPatient(details);
         setSearchedId(uid);
 
         try {
@@ -123,21 +203,43 @@ export default function DoctorPatientAccessPage() {
                 return;
             }
 
-            // 2. Check Pending/Approved Requests
+            // 2. Check Pending/Approved Requests (check across all patient identifiers)
             const q = query(
                 collection(db, 'accessRequests'),
-                where('doctorId', '==', currentUser.uid),
-                where('patientId', '==', uid)
+                where('doctorId', '==', currentUser.uid)
             );
             const snap = await getDocs(q);
-            const requests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const searchIds = [
+                uid, details.globalPatientId, details.email?.toLowerCase(), 
+                details.phone, details.fullName?.toLowerCase(), searchTerm.toLowerCase()
+            ].filter(Boolean);
+
+            const requests = snap.docs
+                .map(d => ({ id: d.id, ...d.data() }))
+                .filter(r => {
+                    const reqPatientId = (r.patientId || '').toLowerCase();
+                    const reqGlobalId = (r.globalPatientId || '').toLowerCase();
+                    const reqEmail = (r.patientEmail || '').toLowerCase();
+                    const reqPhone = (r.patientPhone || '').replace(/[^0-9]/g, '');
+                    const reqName = (r.patientName || '').toLowerCase();
+
+                    return searchIds.some(id => {
+                        const cleanId = id.replace(/[^0-9]/g, '');
+                        return (
+                            id === reqPatientId ||
+                            id === reqGlobalId ||
+                            id === reqEmail ||
+                            (reqName && reqName.includes(id)) ||
+                            (cleanId.length >= 8 && reqPhone.includes(cleanId.slice(-8)))
+                        );
+                    });
+                });
             
             // Find most relevant request
             const approvedReq = requests.find(r => r.status === 'approved');
             const pendingReq = requests.find(r => r.status === 'pending');
 
             if (approvedReq) {
-                // Check if the OTP session exists, is active, and is not expired
                 const otpRef = doc(db, 'otpSessions', approvedReq.id);
                 const otpSnap = await getDoc(otpRef);
                 let isOtpValid = false;
@@ -153,7 +255,6 @@ export default function DoctorPatientAccessPage() {
                     setActiveRequest(approvedReq);
                     setStatus('APPROVED');
                 } else {
-                    // Auto-expire request in Firestore so we don't query it as approved next time
                     try {
                         const requestRef = doc(db, 'accessRequests', approvedReq.id);
                         await updateDoc(requestRef, { status: 'expired' });
@@ -186,11 +287,15 @@ export default function DoctorPatientAccessPage() {
         setLoading(true);
         try {
             const reqId = await accessRequestService.createRequest(currentUser, searchedId, {
-                hospital: 'HealthChain Central',
-                department: 'General',
-                reason: 'Standard Consultation',
+                hospital: currentUser?.hospital || 'HealthChain Central',
+                department: currentUser?.department || 'General Medicine',
+                reason: 'Standard Medical Consultation',
                 duration: '1 hour',
-                urgency: 'Normal'
+                urgency: 'Normal',
+                globalPatientId: resolvedPatient?.globalPatientId || (searchedId.startsWith('HCG-') ? searchedId : null),
+                patientEmail: resolvedPatient?.email || (searchedId.includes('@') ? searchedId.toLowerCase() : null),
+                patientPhone: resolvedPatient?.phone || null,
+                patientName: resolvedPatient?.fullName || null
             });
             setActiveRequest({ id: reqId, status: 'pending' });
             setStatus('PENDING');
@@ -224,7 +329,9 @@ export default function DoctorPatientAccessPage() {
                     <span className="text-[10px] text-[#8B5CF6] font-bold uppercase tracking-widest">Secure Gateway</span>
                 </div>
                 <h2 className="text-3xl font-display font-bold text-white">Patient Access Portal</h2>
-                <p className="text-sm text-[#8899AA] mt-1">Request access and verify OTP to view encrypted patient records.</p>
+                <p className="text-sm text-[#8899AA] mt-1">
+                    Request access and verify OTP via Patient Email, Phone Number, Name, or Global ID.
+                </p>
             </div>
 
             {/* Search Box */}
@@ -236,8 +343,8 @@ export default function DoctorPatientAccessPage() {
                             value={patientId}
                             onChange={e => setPatientId(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && checkAccess(patientId)}
-                            placeholder="Enter Patient UID..."
-                            className="w-full bg-[#0B0F1A] border border-[#1E2D4580] rounded-xl pl-12 pr-4 py-3 text-white placeholder-[#4A5568] focus:border-[#8B5CF6]/50 transition-all"
+                            placeholder="Enter Patient Email, Phone, Name, or Global ID (HCG-XXXXXXXX)..."
+                            className="w-full bg-[#0B0F1A] border border-[#1E2D4580] rounded-xl pl-12 pr-4 py-3 text-white placeholder-[#4A5568] focus:border-[#8B5CF6]/50 transition-all text-sm font-mono"
                         />
                     </div>
                     <button onClick={() => checkAccess(patientId)} disabled={!patientId || loading}

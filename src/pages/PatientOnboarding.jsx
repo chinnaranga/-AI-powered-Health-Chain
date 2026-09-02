@@ -439,6 +439,7 @@ export default function PatientOnboarding() {
                 profileComplete: true,
                 onboardingComplete: true
             };
+            sessionStorage.removeItem('hc_is_new_user');
             localStorage.setItem('hc_patient_profile', JSON.stringify(profileCache));
             if (formData.phone) localStorage.setItem('hc_phone', formData.phone);
             if (formData.email) localStorage.setItem('hc_email', formData.email);
@@ -469,6 +470,7 @@ export default function PatientOnboarding() {
     };
 
     const handleContinueToDashboard = () => {
+        sessionStorage.removeItem('hc_is_new_user');
         setShowSuccessModal(false);
         if (auth.currentUser && !auth.currentUser.emailVerified) {
             const isTestUser = auth.currentUser.email === 'test@hospital.org' || auth.currentUser.email === 'rchinnarangaswamyreddyr@gmail.com';

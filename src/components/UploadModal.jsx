@@ -5,7 +5,8 @@ import NeonButton from './NeonButton';
 import { recordService } from '../services/recordService';
 import { userService } from '../services/userService';
 import useAuthStore from '../store/authStore';
-import { auth } from '../firebase/config';
+import { auth, db } from '../firebase/config';
+import { collection, getDocs } from 'firebase/firestore';
 import { toast } from './Toast';
 
 const RECORD_CATEGORIES = [
@@ -43,18 +44,87 @@ export default function UploadModal({ isOpen, onClose }) {
     const [selectedPatient, setSelectedPatient] = useState(null);
     const [showPatientDropdown, setShowPatientDropdown] = useState(false);
 
-    // Fetch patients list if doctor or clinical staff is logged in
+    // Fetch real patients list from Firestore and PostgreSQL if doctor or clinical staff is logged in
     useEffect(() => {
         if (!isOpen || !isDoctorOrClinical) return;
         const fetchPatients = async () => {
+            const list = [];
+            const seenIds = new Set();
+
+            // 1. Fetch from Firestore users collection
             try {
-                const users = await userService.getUsers();
-                // Filter only patients
-                const filtered = users.filter(u => u.role === 'patient' || !u.role);
-                setAllPatients(filtered);
+                const usersSnap = await getDocs(collection(db, 'users'));
+                usersSnap.forEach(docSnap => {
+                    const data = docSnap.data();
+                    if (data.role === 'patient' || !data.role || data.globalPatientId) {
+                        const id = docSnap.id;
+                        seenIds.add(id);
+                        list.push({
+                            id,
+                            uid: id,
+                            name: data.fullName || data.displayName || data.name || (data.email ? data.email.split('@')[0] : 'Patient'),
+                            email: data.email || '',
+                            phone: data.phone || '',
+                            globalPatientId: data.globalPatientId || '',
+                            patientId: data.patientId || '',
+                            abhaId: data.abhaId || ''
+                        });
+                    }
+                });
             } catch (err) {
-                console.error('Failed to load patient index', err);
+                console.warn('[UploadModal] Firestore users fetch notice:', err.message);
             }
+
+            // 2. Fetch from Firestore patients collection
+            try {
+                const patientsSnap = await getDocs(collection(db, 'patients'));
+                patientsSnap.forEach(docSnap => {
+                    const data = docSnap.data();
+                    const id = data.uid || docSnap.id;
+                    if (!seenIds.has(id)) {
+                        seenIds.add(id);
+                        list.push({
+                            id,
+                            uid: id,
+                            name: data.fullName || data.name || (data.email ? data.email.split('@')[0] : 'Patient'),
+                            email: data.email || '',
+                            phone: data.phone || '',
+                            globalPatientId: data.globalPatientId || '',
+                            patientId: data.patientId || docSnap.id,
+                            abhaId: data.abhaId || ''
+                        });
+                    }
+                });
+            } catch (err) {
+                console.warn('[UploadModal] Firestore patients fetch notice:', err.message);
+            }
+
+            // 3. Fetch from Neon PostgreSQL API
+            try {
+                const apiUsers = await userService.getUsers();
+                if (Array.isArray(apiUsers)) {
+                    apiUsers.forEach(u => {
+                        const id = u.id || u.uid;
+                        if (id && !seenIds.has(id) && (u.role === 'patient' || !u.role)) {
+                            seenIds.add(id);
+                            list.push({
+                                id,
+                                uid: id,
+                                name: u.name || u.fullName || u.displayName || (u.email ? u.email.split('@')[0] : 'Patient'),
+                                email: u.email || '',
+                                phone: u.phone || '',
+                                globalPatientId: u.globalPatientId || '',
+                                patientId: u.patientId || '',
+                                abhaId: u.abhaId || ''
+                            });
+                        }
+                    });
+                }
+            } catch (err) {
+                console.warn('[UploadModal] PostgreSQL users fetch notice:', err.message);
+            }
+
+            setAllPatients(list);
         };
         fetchPatients();
     }, [isOpen, isDoctorOrClinical]);
@@ -122,11 +192,21 @@ export default function UploadModal({ isOpen, onClose }) {
         setCategory(RECORD_CATEGORIES[0]);
     };
 
-    const filteredPatients = allPatients.filter(p =>
-        (p.name && p.name.toLowerCase().includes(patientSearch.toLowerCase())) ||
-        (p.email && p.email.toLowerCase().includes(patientSearch.toLowerCase())) ||
-        (p.id && p.id.toLowerCase().includes(patientSearch.toLowerCase()))
-    );
+    const searchLower = patientSearch.trim().toLowerCase();
+    const searchUpper = patientSearch.trim().toUpperCase();
+    const cleanSearchPhone = patientSearch.replace(/[^0-9]/g, '');
+
+    const filteredPatients = allPatients.filter(p => {
+        if (!searchLower) return true;
+        const nameMatch = (p.name || '').toLowerCase().includes(searchLower);
+        const emailMatch = (p.email || '').toLowerCase().includes(searchLower);
+        const idMatch = (p.id || '').toLowerCase().includes(searchLower) || (p.uid || '').toLowerCase().includes(searchLower);
+        const globalIdMatch = (p.globalPatientId || '').toUpperCase().includes(searchUpper);
+        const patientIdMatch = (p.patientId || '').toUpperCase().includes(searchUpper);
+        const abhaMatch = (p.abhaId || '').toUpperCase().includes(searchUpper);
+        const phoneMatch = cleanSearchPhone.length >= 4 && (p.phone || '').replace(/[^0-9]/g, '').includes(cleanSearchPhone);
+        return nameMatch || emailMatch || idMatch || globalIdMatch || patientIdMatch || abhaMatch || phoneMatch;
+    });
 
     if (!isOpen) return null;
 
@@ -202,11 +282,16 @@ export default function UploadModal({ isOpen, onClose }) {
                                                 <label className="block text-[10px] text-[#8899AA] font-bold uppercase tracking-wider mb-2">Target Patient</label>
                                                 {selectedPatient ? (
                                                     <div className="flex items-center justify-between p-3 rounded-xl bg-[#00C8D4]/5 border border-[#00C8D4]/30">
-                                                        <div className="flex items-center gap-2">
-                                                            <User className="w-4 h-4 text-[#00C8D4]" />
-                                                            <span className="text-sm text-white font-semibold">{selectedPatient.name || selectedPatient.email}</span>
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            <User className="w-4 h-4 text-[#00C8D4] flex-shrink-0" />
+                                                            <div className="min-w-0">
+                                                                <p className="text-sm text-white font-semibold truncate">{selectedPatient.name || selectedPatient.email}</p>
+                                                                <p className="text-[10px] text-[#8899AA] font-mono truncate">
+                                                                    {selectedPatient.globalPatientId || selectedPatient.email || selectedPatient.id}
+                                                                </p>
+                                                            </div>
                                                         </div>
-                                                        <button onClick={() => setSelectedPatient(null)} className="p-1 text-[#8899AA] hover:text-red-400 transition-colors">
+                                                        <button onClick={() => setSelectedPatient(null)} className="p-1 text-[#8899AA] hover:text-red-400 transition-colors flex-shrink-0 ml-2">
                                                             <X className="w-3.5 h-3.5" />
                                                         </button>
                                                     </div>
@@ -220,13 +305,13 @@ export default function UploadModal({ isOpen, onClose }) {
                                                                 setShowPatientDropdown(true);
                                                             }}
                                                             onFocus={() => setShowPatientDropdown(true)}
-                                                            placeholder="Type patient name or ID..."
-                                                            className="w-full bg-[#0B0F1A] border border-[#1E2D4580] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white focus:outline-none focus:border-[#00C8D4]/50 transition-all"
+                                                            placeholder="Type patient name, email, phone, or Global ID (HCG-...)"
+                                                            className="w-full bg-[#0B0F1A] border border-[#1E2D4580] rounded-xl pl-9 pr-3 py-2.5 text-sm text-white focus:outline-none focus:border-[#00C8D4]/50 transition-all font-mono"
                                                         />
-                                                        {showPatientDropdown && patientSearch.length > 0 && (
-                                                            <div className="absolute left-0 right-0 mt-1.5 max-h-48 overflow-y-auto bg-[#1A2236] border border-[#1E2D4580] rounded-xl z-20 shadow-2xl divide-y divide-[#1E2D4580]">
-                                                                {filteredPatients.length === 0 ? (
-                                                                    <div className="p-3 text-xs text-[#8899AA] text-center">No patients matching search</div>
+                                                        {showPatientDropdown && (
+                                                            <div className="absolute left-0 right-0 mt-1.5 max-h-56 overflow-y-auto bg-[#1A2236] border border-[#1E2D4580] rounded-xl z-20 shadow-2xl divide-y divide-[#1E2D4580]">
+                                                                {filteredPatients.length === 0 && patientSearch.trim().length === 0 ? (
+                                                                    <div className="p-3 text-xs text-[#8899AA] text-center">No patients found in directory</div>
                                                                 ) : (
                                                                     filteredPatients.map(p => (
                                                                         <div
@@ -235,12 +320,45 @@ export default function UploadModal({ isOpen, onClose }) {
                                                                                 setSelectedPatient(p);
                                                                                 setShowPatientDropdown(false);
                                                                             }}
-                                                                            className="p-3 hover:bg-[#00C8D4]/10 cursor-pointer transition-colors text-left"
+                                                                            className="p-3 hover:bg-[#00C8D4]/10 cursor-pointer transition-colors text-left flex items-center justify-between"
                                                                         >
-                                                                            <p className="text-sm font-semibold text-white">{p.name || p.email}</p>
-                                                                            <p className="text-[10px] text-[#8899AA] uppercase font-mono tracking-wider">ID: {p.id.slice(0, 8)}</p>
+                                                                            <div className="min-w-0 flex-1 mr-2">
+                                                                                <p className="text-sm font-semibold text-white truncate">{p.name || p.email}</p>
+                                                                                <p className="text-[11px] text-[#8899AA] truncate">
+                                                                                    {p.email ? p.email : ''}{p.phone ? ` • ${p.phone}` : ''}
+                                                                                </p>
+                                                                            </div>
+                                                                            <div className="text-right flex-shrink-0">
+                                                                                <span className="text-[10px] font-mono font-bold text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20">
+                                                                                    {p.globalPatientId || p.id.slice(0, 10)}
+                                                                                </span>
+                                                                            </div>
                                                                         </div>
                                                                     ))
+                                                                )}
+                                                                {patientSearch.trim().length > 0 && !filteredPatients.some(p => p.id === patientSearch.trim() || p.email?.toLowerCase() === patientSearch.trim().toLowerCase()) && (
+                                                                    <div
+                                                                        onClick={() => {
+                                                                            const term = patientSearch.trim();
+                                                                            setSelectedPatient({
+                                                                                id: term,
+                                                                                uid: term,
+                                                                                name: term,
+                                                                                email: term.includes('@') ? term : '',
+                                                                                globalPatientId: term.startsWith('HCG-') ? term.toUpperCase() : ''
+                                                                            });
+                                                                            setShowPatientDropdown(false);
+                                                                        }}
+                                                                        className="p-3 bg-[#00C8D4]/5 hover:bg-[#00C8D4]/15 cursor-pointer transition-colors text-left flex items-center justify-between border-t border-[#1E2D4580]"
+                                                                    >
+                                                                        <div className="min-w-0 flex-1 mr-2">
+                                                                            <p className="text-xs font-bold text-[#00C8D4]">Use entered Patient ID / Email:</p>
+                                                                            <p className="text-xs font-mono text-white truncate">{patientSearch.trim()}</p>
+                                                                        </div>
+                                                                        <span className="text-[10px] uppercase font-bold text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20 whitespace-nowrap">
+                                                                            Select
+                                                                        </span>
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         )}
