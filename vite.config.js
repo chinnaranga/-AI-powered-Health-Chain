@@ -6,8 +6,15 @@ import react from '@vitejs/plugin-react'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+const buildVersion = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
+const buildTime = new Date().toISOString()
+
 // https://vitejs.dev/config/
 export default defineConfig({
+  define: {
+    __BUILD_VERSION__: JSON.stringify(buildVersion),
+    __BUILD_TIME__: JSON.stringify(buildTime),
+  },
   plugins: [react()],
   esbuild: {
     legalComments: 'none',

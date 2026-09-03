@@ -8,6 +8,7 @@ import AuthProvider from './providers/AuthProvider';
 import { FEATURES } from './config/features';
 import Maintenance from './pages/Maintenance';
 import CookieConsent from './components/common/CookieConsent';
+import DeploymentUpdatePopup from './components/DeploymentUpdatePopup';
 import AppRoutes from './routes';
 
 /**
@@ -34,6 +35,7 @@ function App() {
                         <ConnectionStatus />
                         <ToastContainer />
                         <CookieConsent />
+                        <DeploymentUpdatePopup />
                         <AnimatePresence mode="wait">
                             <Suspense
                                 fallback={
