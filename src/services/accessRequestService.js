@@ -1,282 +1,221 @@
-import { db } from '../firebase/config';
-import { 
-    collection, addDoc, updateDoc, doc, getDoc, getDocs, 
-    query, where, onSnapshot, serverTimestamp, setDoc
-} from 'firebase/firestore';
+import apiClient from './apiClient';
 
 export const accessRequestService = {
-    // DOCTOR: Create an access request
-    async createRequest(doctorInfo, patientId, details) {
-        try {
-            // Strip any undefined values to prevent Firestore errors
-            const sanitize = (obj) => Object.fromEntries(
-                Object.entries(obj).filter(([, v]) => v !== undefined && v !== null)
-            );
-
-            const requestData = sanitize({
-                doctorId: doctorInfo.uid || doctorInfo.id,
-                doctorName: doctorInfo.displayName || doctorInfo.name || 'Dr. Attending Physician',
-                doctorEmail: doctorInfo.email || '',
-                patientId: patientId,
-                globalPatientId: details.globalPatientId || (patientId?.startsWith('HCG-') ? patientId : null),
-                patientEmail: details.patientEmail || (patientId?.includes('@') ? patientId : null),
-                patientPhone: details.patientPhone || null,
-                patientName: details.patientName || null,
-                hospital: details.hospital || 'HealthChain Central',
-                department: details.department || 'General Medicine',
-                reason: details.reason || 'Medical Consultation',
-                duration: details.duration || '1 hour',
-                urgency: details.urgency || 'Normal',
-                status: 'pending',
-                timestamp: serverTimestamp(),
-            });
-
-            const docRef = await addDoc(collection(db, 'accessRequests'), requestData);
-            
-            // Log to audit
-            await this.logAuditActivity('ACCESS_REQUEST_CREATED', doctorInfo.uid || doctorInfo.id, {
-                requestId: docRef.id,
-                patientId,
-                patientEmail: details.patientEmail,
-                patientPhone: details.patientPhone,
-                urgency: details.urgency || 'Normal'
-            });
-
-            return docRef.id;
-        } catch (error) {
-            console.error('Error creating access request:', error);
-            throw error;
-        }
-    },
-
-    // DOCTOR: Listen to a specific request status
-    listenToDoctorRequest(requestId, callback) {
-        const docRef = doc(db, 'accessRequests', requestId);
-        return onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                callback({ id: docSnap.id, ...docSnap.data() });
-            }
+    // DOCTOR: Create an access request in Neon
+    async createRequest(doctorInfo, patientId, details = {}) {
+        const response = await apiClient.post('/access-requests', {
+            patientId,
+            globalPatientId: details.globalPatientId || null,
+            patientEmail: details.patientEmail || null,
+            patientPhone: details.patientPhone || null,
+            patientName: details.patientName || null,
+            hospital: details.hospital || 'HealthChain Central',
+            department: details.department || 'General Medicine',
+            reason: details.reason || 'Medical Consultation',
+            duration: details.duration || '1 hour',
+            urgency: details.urgency || 'Normal'
         });
+
+        if (!response?.success || !response?.requestId) {
+            throw new Error(response?.message || 'Failed to create access request.');
+        }
+
+        return response.requestId;
     },
 
-    // PATIENT: Listen to incoming pending requests across all matching identifiers (Email, Phone, Name, Global ID, UID)
-    listenToPatientRequests(patientIdentifiers, callback) {
-        const idList = (Array.isArray(patientIdentifiers) ? patientIdentifiers : [patientIdentifiers])
-            .filter(Boolean)
-            .map(id => String(id).trim().toLowerCase());
+    // DOCTOR: Poll a specific request status
+    async getRequest(requestId) {
+        const response = await apiClient.get(`/access-requests/${encodeURIComponent(requestId)}`);
+        return response?.request || null;
+    },
 
-        if (idList.length === 0) return () => {};
+    // DOCTOR: Compatibility method replacing the old Firestore listener
+    listenToDoctorRequest(requestId, callback, options = {}) {
+        let stopped = false;
+        const intervalMs = options.intervalMs || 5000;
 
-        const q = query(
-            collection(db, 'accessRequests'), 
-            where('status', 'in', ['pending', 'approved'])
-        );
-        return onSnapshot(q, (snapshot) => {
-            const requests = snapshot.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter(r => {
-                    const reqPatientId = (r.patientId || '').toLowerCase();
-                    const reqGlobalId = (r.globalPatientId || '').toLowerCase();
-                    const reqEmail = (r.patientEmail || '').toLowerCase();
-                    const reqPhone = (r.patientPhone || '').replace(/[^0-9]/g, '');
-                    const reqName = (r.patientName || '').toLowerCase();
+        const poll = async () => {
+            if (stopped) return;
 
-                    return idList.some(id => {
-                        const cleanId = id.replace(/[^0-9]/g, '');
-                        return (
-                            id === reqPatientId ||
-                            id === reqGlobalId ||
-                            id === reqEmail ||
-                            (reqName && reqName.includes(id)) ||
-                            (cleanId.length >= 8 && reqPhone.includes(cleanId.slice(-8)))
-                        );
+            try {
+                const request = await this.getRequest(requestId);
+                if (request && !stopped) {
+                    callback({
+                        id: request.id,
+                        ...request,
+                        approvedAt: request.responded_at,
+                        timestamp: request.requested_at
                     });
-                });
-            callback(requests);
-        }, (err) => {
-            console.warn('[accessRequestService] Realtime sync notice:', err.message);
-        });
+                }
+            } catch (error) {
+                if (!stopped) {
+                    console.warn('[accessRequestService] Request status polling:', error.message);
+                }
+            }
+        };
+
+        poll();
+        const timer = window.setInterval(poll, intervalMs);
+
+        return () => {
+            stopped = true;
+            window.clearInterval(timer);
+        };
     },
 
-    // PATIENT: Approve a request and generate OTP
+    // PATIENT: Load incoming requests from Neon
+    async getPatientRequests() {
+        const response = await apiClient.get('/access-requests/patient');
+        return response?.requests || [];
+    },
+
+    // PATIENT: Poll incoming requests
+    listenToPatientRequests(patientIdentifiers, callback, options = {}) {
+        let stopped = false;
+        const intervalMs = options.intervalMs || 5000;
+
+        const poll = async () => {
+            if (stopped) return;
+
+            try {
+                const requests = await this.getPatientRequests();
+
+                if (!stopped) {
+                    callback(
+                        requests.map(request => ({
+                            id: request.id,
+                            ...request,
+                            doctorId: request.doctor_id,
+                            doctorName: request.doctor_name,
+                            doctorEmail: request.doctor_email,
+                            doctorSpecialty: request.doctor_specialty,
+                            patientId: request.patient_id,
+                            globalPatientId: request.global_patient_id,
+                            patientEmail: request.patient_email,
+                            patientPhone: request.patient_phone,
+                            patientName: request.patient_name,
+                            hospitalId: request.hospital_id,
+                            hospital: request.hospital,
+                            requestedAt: request.requested_at,
+                            respondedAt: request.responded_at,
+                            expiresAt: request.expires_at,
+                            createdAt: request.created_at,
+                            updatedAt: request.updated_at
+                        }))
+                    );
+                }
+            } catch (error) {
+                if (!stopped) {
+                    console.warn('[accessRequestService] Patient request polling:', error.message);
+                    callback([]);
+                }
+            }
+        };
+
+        poll();
+        const timer = window.setInterval(poll, intervalMs);
+
+        return () => {
+            stopped = true;
+            window.clearInterval(timer);
+        };
+    },
+
+    // PATIENT: Approve request and receive one-time OTP
     async approveRequestAndGenerateOTP(requestId, patientId) {
-        try {
-            // 1. Update request status
-            const requestRef = doc(db, 'accessRequests', requestId);
-            await updateDoc(requestRef, {
-                status: 'approved',
-                approvedAt: serverTimestamp()
-            });
+        const response = await apiClient.post(
+            `/access-requests/${encodeURIComponent(requestId)}/approve`,
+            {}
+        );
 
-            // 2. Generate 6 digit OTP
-            const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-            
-            // 3. Create OTP session
-            const otpData = {
-                requestId: requestId,
-                patientId: patientId,
-                code: otpCode,
-                active: true,
-                createdAt: serverTimestamp(),
-                expiresAt: new Date(Date.now() + 15 * 60000), // 15 mins expiry
-            };
-            await setDoc(doc(db, 'otpSessions', requestId), otpData);
-
-            // Log to audit
-            await this.logAuditActivity('REQUEST_APPROVED_OTP_GENERATED', patientId, { requestId });
-
-            return otpCode;
-        } catch (error) {
-            console.error('Error approving request:', error);
-            throw error;
+        if (!response?.success || !response?.otpCode) {
+            throw new Error(response?.message || 'Failed to approve access request.');
         }
+
+        return response.otpCode;
     },
 
-    // PATIENT: Reject a request
+    // PATIENT: Reject request
     async rejectRequest(requestId, patientId) {
-        try {
-            const requestRef = doc(db, 'accessRequests', requestId);
-            await updateDoc(requestRef, {
-                status: 'rejected',
-                rejectedAt: serverTimestamp()
-            });
+        const response = await apiClient.post(
+            `/access-requests/${encodeURIComponent(requestId)}/reject`,
+            {}
+        );
 
-            // Log to audit
-            await this.logAuditActivity('REQUEST_REJECTED', patientId, { requestId });
-        } catch (error) {
-            console.error('Error rejecting request:', error);
-            throw error;
+        if (!response?.success) {
+            throw new Error(response?.message || 'Failed to reject access request.');
         }
+
+        return response.request;
     },
 
     // DOCTOR: Verify OTP and grant access
     async verifyOTPAndGrantAccess(requestId, otpCode, doctorId) {
-        try {
-            // 1. Fetch the OTP session
-            const otpRef = doc(db, 'otpSessions', requestId);
-            const otpSnap = await getDoc(otpRef);
-
-            if (!otpSnap.exists()) {
-                throw new Error('OTP session not found or expired.');
-            }
-
-            const otpData = otpSnap.data();
-
-            // 2. Validate OTP
-            if (!otpData.active) {
-                throw new Error('This OTP is no longer active.');
-            }
-            if (otpData.code !== otpCode) {
-                throw new Error('Invalid OTP code.');
-            }
-            if (otpData.expiresAt.toDate() < new Date()) {
-                await updateDoc(otpRef, { active: false });
-                throw new Error('OTP has expired.');
-            }
-
-            // 3. Mark OTP as used
-            await updateDoc(otpRef, { active: false });
-
-            // Also update the original accessRequest status to 'used'
-            try {
-                const requestRef = doc(db, 'accessRequests', requestId);
-                await updateDoc(requestRef, { status: 'used' });
-            } catch (err) {
-                console.warn('Failed to update access request status to used:', err);
-            }
-
-            // 4. Create active session
-            const activeSessionData = {
-                requestId: requestId,
-                doctorId: doctorId,
-                patientId: otpData.patientId,
-                active: true,
-                grantedAt: serverTimestamp(),
-                // In MVP we use a default duration, can be pulled from request details
-                expiresAt: new Date(Date.now() + 60 * 60000) // 1 hour access
-            };
-            const sessionRef = await addDoc(collection(db, 'activeSessions'), activeSessionData);
-
-            // 5. Log to audit
-            await this.logAuditActivity('OTP_VERIFIED_ACCESS_GRANTED', doctorId, {
-                requestId,
-                sessionId: sessionRef.id,
-                patientId: otpData.patientId
-            });
-
-            return sessionRef.id;
-        } catch (error) {
-            console.error('Error verifying OTP:', error);
-            throw error;
-        }
-    },
-
-    // DOCTOR: Check if active session exists
-    async checkActiveSession(doctorId, patientId) {
-        const q = query(
-            collection(db, 'activeSessions'),
-            where('doctorId', '==', doctorId),
-            where('patientId', '==', patientId),
-            where('active', '==', true)
+        const response = await apiClient.post(
+            `/access-requests/${encodeURIComponent(requestId)}/verify-otp`,
+            { otpCode }
         );
-        const snapshot = await getDocs(q);
-        
-        // Filter out expired sessions
-        const validSessions = snapshot.docs.filter(doc => doc.data().expiresAt.toDate() > new Date());
-        return validSessions.length > 0;
-    },
 
-    // PATIENT: Revoke an active session
-    async revokeActiveSession(sessionId, patientId) {
-        try {
-            const sessionRef = doc(db, 'activeSessions', sessionId);
-            await updateDoc(sessionRef, {
-                active: false,
-                revokedAt: serverTimestamp()
-            });
-
-            // Log to audit
-            await this.logAuditActivity('SESSION_REVOKED', patientId, { sessionId });
-        } catch (error) {
-            console.error('Error revoking active session:', error);
-            throw error;
+        if (!response?.success || !response?.sessionId) {
+            throw new Error(response?.message || 'Failed to verify OTP.');
         }
+
+        return response.sessionId;
     },
 
-    // PATIENT: Revoke/Clear general access code
+    // DOCTOR: Check active access session
+    async checkActiveSession(doctorId, patientId) {
+        const params = new URLSearchParams();
+
+        if (patientId) {
+            params.set('patientId', patientId);
+        }
+
+        const response = await apiClient.get(
+            `/access-sessions/check?${params.toString()}`
+        );
+
+        return Boolean(response?.active);
+    },
+
+    // PATIENT: Revoke active access session
+    async revokeActiveSession(sessionId, patientId) {
+        const response = await apiClient.post(
+            `/access-sessions/${encodeURIComponent(sessionId)}/revoke`,
+            {}
+        );
+
+        if (!response?.success) {
+            throw new Error(response?.message || 'Failed to revoke active access session.');
+        }
+
+        return response.session;
+    },
+
+    // PATIENT: Existing general access-code compatibility method
     async revokeGeneralAccessCode(patientId) {
         try {
-            const userRef = doc(db, 'users', patientId);
-            await updateDoc(userRef, {
-                accessCode: null
+            await apiClient.post('/access-code', {
+                userId: patientId,
+                code: null
             });
-
-            // Log to audit
-            await this.logAuditActivity('GENERAL_ACCESS_CODE_REVOKED', patientId);
         } catch (error) {
-            console.error('Error revoking general access code:', error);
-            throw error;
+            console.warn('[accessRequestService] General access-code revoke:', error.message);
         }
     },
 
-    // Helper: Log to Audit/Blockchain
-    async logAuditActivity(activityType, userId, details) {
+    // Compatibility audit method
+    async logAuditActivity(activityType, userId, details = {}) {
         try {
-            const chars = '0123456789abcdef';
-            let txHash = '0x';
-            for (let i = 0; i < 64; i++) {
-                txHash += chars[Math.floor(Math.random() * 16)];
-            }
-
-            await addDoc(collection(db, 'auditLogs'), {
-                timestamp: serverTimestamp(),
-                activityType,
-                userId,
-                details: details || {},
-                txHash
+            await apiClient.post('/log', {
+                patientId: details.patientId || userId,
+                doctorId: details.doctorId || userId,
+                accessType: activityType
             });
         } catch (error) {
-            console.error("Audit logging failed", error);
+            console.warn('[accessRequestService] Audit logging:', error.message);
         }
     }
 };
+
+export default accessRequestService;

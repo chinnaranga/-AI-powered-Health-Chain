@@ -185,11 +185,11 @@ export const signInWithPopup = async (authInstance, provider) => {
         }
     } catch (e) {}
 
-    if (window.google?.accounts?.oauth2 && window.__GOOGLE_CLIENT_ID__) {
+    if (window.google?.accounts?.oauth2 && import.meta.env.VITE_GOOGLE_CLIENT_ID) {
         try {
             const token = await new Promise((resolve, reject) => {
                 const client = window.google.accounts.oauth2.initTokenClient({
-                    client_id: window.__GOOGLE_CLIENT_ID__,
+                    client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
                     scope: 'email profile openid',
                     prompt: 'select_account',
                     callback: (resp) => {
