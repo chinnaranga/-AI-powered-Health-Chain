@@ -25,12 +25,11 @@ export const authMiddleware = async (req, res, next) => {
         req.role = decodedToken.role || 'patient';
         next();
     } catch (error) {
-        // Fallback for custom dev tokens
-        req.user = { uid: token, email: 'session.user@healthchain.org', role: 'patient' };
-        req.tenantId = 'default_tenant';
-        req.hospitalId = 'default_hospital';
-        req.role = 'patient';
-        next();
+        console.warn('[Auth] Invalid or expired token:', error.message);
+        return res.status(401).json({
+            success: false,
+            message: 'Invalid or expired authentication token.'
+        });
     }
 };
 
