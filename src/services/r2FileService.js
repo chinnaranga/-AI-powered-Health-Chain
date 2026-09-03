@@ -7,13 +7,25 @@ const getBase = () => getApiBaseUrl();
  * Gets Firebase Auth Token for authenticated requests
  */
 async function getAuthToken() {
+    // R2 API routes use the backend JWT authentication middleware.
+    // Always prefer the authoritative backend session token.
+    const backendToken =
+        localStorage.getItem('hc_token') ||
+        localStorage.getItem('hc_cf_jwt');
+
+    if (backendToken) {
+        return backendToken;
+    }
+
+    // Firebase fallback is retained only for legacy/offline compatibility.
     try {
         if (auth.currentUser) {
             return await auth.currentUser.getIdToken();
         }
     } catch (e) {
-        console.warn('[r2FileService] Token retrieval notice:', e.message);
+        console.warn('[r2FileService] Firebase token fallback notice:', e.message);
     }
+
     return localStorage.getItem('hc_dev_token') || 'dev_session_token';
 }
 
