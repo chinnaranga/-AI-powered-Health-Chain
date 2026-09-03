@@ -21,7 +21,7 @@ async function verifyAdminUser(req) {
         admin = await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [adminEmail]);
     }
 
-    if (!admin || admin.role !== 'admin') {
+    if (!admin || !['admin', 'super_admin'].includes(admin.role)) {
         return null;
     }
 
