@@ -559,6 +559,215 @@ export const saveTermsConsent = async (req, res) => {
     }
 };
 
+
+/**
+ * 6. PUT /api/auth/patient-profile - Persist patient identity profile in Neon PostgreSQL
+ */
+export const updatePatientProfile = async (req, res) => {
+    try {
+        const userId = req.user?.uid || req.user?.userId;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication required.'
+            });
+        }
+
+        const {
+            fullName,
+            displayName,
+            name,
+            email,
+            phoneNumber,
+            phone,
+            abhaId,
+            dob,
+            gender,
+            bloodGroup,
+            allergies,
+            photoURL
+        } = req.body || {};
+
+        const finalName = String(
+            fullName || displayName || name || ''
+        ).trim();
+
+        const finalPhone = String(
+            phoneNumber || phone || ''
+        ).trim();
+
+        const normalizedEmail = String(email || '').trim().toLowerCase();
+        const finalAbhaId = String(abhaId || '').trim();
+        const finalGender = String(gender || '').trim();
+        const finalBloodGroup = String(bloodGroup || '').trim();
+        const finalAllergies = String(allergies || '').trim();
+
+        if (!finalName) {
+            return res.status(400).json({
+                success: false,
+                message: 'Full Name is required.'
+            });
+        }
+
+        const user = await getDb(
+            `SELECT * FROM users WHERE id = ? LIMIT 1`,
+            [userId]
+        );
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User account not found.'
+            });
+        }
+
+        if (user.role !== 'patient') {
+            return res.status(403).json({
+                success: false,
+                message: 'This endpoint is only available for patient profiles.'
+            });
+        }
+
+        // Keep the authoritative account information in the users table.
+        await runDb(
+            `UPDATE users
+             SET
+                 name = ?,
+                 phone = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [
+                finalName,
+                finalPhone,
+                userId
+            ]
+        );
+
+        // Ensure a patient profile exists, then persist all identity fields in Neon.
+        await runDb(
+            `INSERT INTO patients (
+                id,
+                user_id,
+                full_name,
+                contact_phone,
+                abha_id,
+                dob,
+                gender,
+                blood_group,
+                allergies,
+                updated_at
+            )
+            VALUES (
+                gen_random_uuid(),
+                ?,
+                ?,
+                ?,
+                ?,
+                NULLIF(?, '')::date,
+                ?,
+                ?,
+                ?,
+                CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                full_name = EXCLUDED.full_name,
+                contact_phone = EXCLUDED.contact_phone,
+                abha_id = EXCLUDED.abha_id,
+                dob = EXCLUDED.dob,
+                gender = EXCLUDED.gender,
+                blood_group = EXCLUDED.blood_group,
+                allergies = EXCLUDED.allergies,
+                updated_at = CURRENT_TIMESTAMP`,
+            [
+                userId,
+                finalName,
+                finalPhone,
+                finalAbhaId || null,
+                dob || '',
+                finalGender || null,
+                finalBloodGroup || null,
+                finalAllergies || null
+            ]
+        );
+
+        const updatedUser = await getDb(
+            `SELECT * FROM users WHERE id = ? LIMIT 1`,
+            [userId]
+        );
+
+        const updatedPatient = await getDb(
+            `SELECT * FROM patients WHERE user_id = ? LIMIT 1`,
+            [userId]
+        ) || {};
+
+        const returnedUser = {
+            id: updatedUser.id,
+            uid: updatedUser.id,
+            email: updatedUser.email,
+            name: updatedUser.name || updatedPatient.full_name || '',
+            fullName: updatedPatient.full_name || updatedUser.name || '',
+            displayName: updatedPatient.full_name || updatedUser.name || '',
+            phoneNumber: updatedUser.phone || updatedPatient.contact_phone || '',
+            phone: updatedUser.phone || updatedPatient.contact_phone || '',
+            photoURL: photoURL || '',
+            role: updatedUser.role,
+            hospitalId: updatedUser.hospital_id || 'default_hospital',
+            tenantId: updatedUser.hospital_id || 'default_tenant',
+            abhaId: updatedPatient.abha_id || '',
+            dob: updatedPatient.dob || '',
+            gender: updatedPatient.gender || '',
+            bloodGroup: updatedPatient.blood_group || '',
+            allergies: updatedPatient.allergies || '',
+            profileComplete: !!(
+                (updatedPatient.full_name || updatedUser.name) &&
+                (updatedUser.phone || updatedPatient.contact_phone) &&
+                updatedUser.email &&
+                updatedPatient.dob &&
+                updatedPatient.abha_id
+            ),
+            onboardingComplete: !!updatedPatient.dob
+        };
+
+        await writeAuditEvent({
+            userId,
+            role: updatedUser.role || 'patient',
+            action: 'PATIENT_PROFILE_UPDATED',
+            resourceType: 'patient_profile',
+            resourceId: updatedPatient.id,
+            details: {
+                fieldsUpdated: [
+                    'fullName',
+                    'phoneNumber',
+                    'email',
+                    'abhaId',
+                    'dob',
+                    'gender',
+                    'bloodGroup',
+                    'allergies'
+                ]
+            },
+            ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+            userAgent: req.headers['user-agent'] || 'HealthChain Client',
+            status: 'SUCCESS'
+        });
+
+        return res.json({
+            success: true,
+            message: 'Patient identity profile saved to Neon PostgreSQL.',
+            user: returnedUser
+        });
+    } catch (error) {
+        console.error('[Patient Profile Update Error]:', error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to save patient identity profile.'
+        });
+    }
+};
+
 export const refreshToken = async (req, res) => {
     res.json({ success: true, message: 'Session refreshed successfully.' });
 };

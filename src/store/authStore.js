@@ -182,70 +182,98 @@ const useAuthStore = create((set, get) => ({
     // 2. Google OAuth Login Flow
     loginGoogle: async (requestedRole = 'patient', googleUserPayload = null) => {
         set({ isLoading: true, error: null });
+
         try {
             const googleName = googleUserPayload?.displayName || localStorage.getItem('hc_name') || '';
             const googleEmail = googleUserPayload?.email || localStorage.getItem('hc_email') || '';
             const googlePhoto = googleUserPayload?.photoURL || localStorage.getItem('hc_photo') || '';
             const googlePhone = googleUserPayload?.phoneNumber || localStorage.getItem('hc_phone') || '';
 
-            const uid = googleUserPayload?.uid || `usr_google_${Date.now().toString(36)}`;
-
-            let savedProfile = (() => {
-                try {
-                    const raw = localStorage.getItem('hc_patient_profile');
-                    return raw ? JSON.parse(raw) : null;
-                } catch (e) { return null; }
-            })();
-
-            // If a different Google account is used, reset the old account's cached profile
-            if (savedProfile && googleEmail && savedProfile.email && savedProfile.email.toLowerCase() !== googleEmail.toLowerCase()) {
-                localStorage.removeItem('hc_patient_profile');
-                savedProfile = null;
+            if (!googleEmail) {
+                throw new Error('Google account email is required.');
             }
 
+            const apiBaseUrl = (
+                typeof window !== 'undefined' &&
+                (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            )
+                ? 'http://localhost:3001/api'
+                : 'https://healthchain-backend-kz6q.onrender.com/api';
+
+            const response = await fetch(`${apiBaseUrl}/auth/google`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    role: requestedRole,
+                    googleUser: {
+                        email: googleEmail,
+                        name: googleName,
+                        fullName: googleName,
+                        displayName: googleName,
+                        photoURL: googlePhoto,
+                        phoneNumber: googlePhone
+                    }
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success || !data.token || !data.user) {
+                throw new Error(data.message || 'Google authentication failed.');
+            }
+
+            const backendUser = data.user;
+
             const fullUser = {
-                id: uid,
-                uid,
-                email: googleEmail,
-                name: googleName || savedProfile?.displayName || '',
-                fullName: googleName || savedProfile?.fullName || '',
-                displayName: googleName || savedProfile?.displayName || '',
-                photoURL: googlePhoto || savedProfile?.photoURL || '',
-                phoneNumber: googlePhone || savedProfile?.phoneNumber || '',
-                phone: googlePhone || savedProfile?.phoneNumber || '',
-                dob: savedProfile?.dob || '',
-                gender: savedProfile?.gender || '',
-                bloodGroup: savedProfile?.bloodGroup || '',
-                abhaId: savedProfile?.abhaId || '',
-                role: requestedRole,
+                ...backendUser,
+                id: backendUser.id || backendUser.uid,
+                uid: backendUser.uid || backendUser.id,
+                email: backendUser.email || googleEmail,
+                name: backendUser.name || backendUser.displayName || googleName,
+                fullName: backendUser.fullName || backendUser.name || googleName,
+                displayName: backendUser.displayName || backendUser.name || googleName,
+                phoneNumber: backendUser.phoneNumber || backendUser.phone || googlePhone || '',
+                phone: backendUser.phone || backendUser.phoneNumber || googlePhone || '',
+                photoURL: backendUser.photoURL || googlePhoto || '',
+                role: backendUser.role || requestedRole,
                 loginMethod: 'google',
                 authProvider: 'google.com',
-                profileComplete: !!(savedProfile?.profileComplete || (savedProfile?.dob && googleEmail)),
-                onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
+                profileComplete: !!backendUser.profileComplete,
+                onboardingComplete: !!backendUser.onboardingComplete
             };
 
-            const token = `google_jwt_${Date.now()}`;
-            localStorage.setItem('hc_cf_jwt', token);
-            localStorage.setItem('hc_token', token);
-            if (googleEmail) localStorage.setItem('hc_email', googleEmail);
-            if (googleName) localStorage.setItem('hc_name', googleName);
-            if (googlePhoto) localStorage.setItem('hc_photo', googlePhoto);
-            localStorage.setItem('hc_user_role', requestedRole);
-            localStorage.setItem('hc_role', requestedRole);
+            localStorage.setItem('hc_cf_jwt', data.token);
+            localStorage.setItem('hc_token', data.token);
+            localStorage.setItem('hc_user_role', fullUser.role);
+            localStorage.setItem('hc_role', fullUser.role);
             localStorage.setItem('hc_user', JSON.stringify(fullUser));
+
+            if (fullUser.email) localStorage.setItem('hc_email', fullUser.email);
+            if (fullUser.name) localStorage.setItem('hc_name', fullUser.name);
+            if (fullUser.phoneNumber) localStorage.setItem('hc_phone', fullUser.phoneNumber);
+            if (fullUser.photoURL) localStorage.setItem('hc_photo', fullUser.photoURL);
 
             set({
                 user: fullUser,
-                token,
-                role: requestedRole,
+                token: data.token,
+                role: fullUser.role,
                 isAuthenticated: true,
                 isLoading: false,
                 error: null
             });
 
-            return { success: true, token, user: fullUser };
+            return {
+                success: true,
+                token: data.token,
+                user: fullUser
+            };
         } catch (err) {
-            set({ error: err.message, isLoading: false });
+            set({
+                error: err.message,
+                isLoading: false
+            });
             throw err;
         }
     },

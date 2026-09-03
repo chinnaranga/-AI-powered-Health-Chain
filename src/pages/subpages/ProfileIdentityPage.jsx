@@ -136,7 +136,7 @@ export default function ProfileIdentityPage() {
     // Form validation and profile save
     const handleSaveProfile = async (e) => {
         e.preventDefault();
-        
+
         if (!displayName.trim()) {
             toast.error('Please enter your Full Name');
             return;
@@ -148,6 +148,7 @@ export default function ProfileIdentityPage() {
         }
 
         setIsUpdating(true);
+
         try {
             const finalGId = globalPatientId || `HCG-${Date.now().toString(36).toUpperCase()}`;
 
@@ -171,48 +172,164 @@ export default function ProfileIdentityPage() {
                 updatedAt: new Date().toISOString()
             };
 
-            // 1. Save directly to local persistent storage
-            localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(profilePayload));
-            if (phoneNumber.trim()) localStorage.setItem('hc_phone', phoneNumber.trim());
-            if (email.trim()) localStorage.setItem('hc_email', email.trim());
-            if (displayName.trim()) localStorage.setItem('hc_name', displayName.trim());
-            if (photoURL) localStorage.setItem('hc_photo', photoURL);
+            // 1. Neon PostgreSQL is the authoritative persistence layer.
+            const token =
+                localStorage.getItem('hc_cf_jwt') ||
+                localStorage.getItem('hc_token') ||
+                '';
 
-            // 2. Synchronize Auth Store & Global App state
-            const currentAuthUser = useAuthStore.getState().user || {};
+            if (!token) {
+                throw new Error('Authentication session expired. Please sign in again.');
+            }
+
+            const apiBaseUrl = (
+                typeof window !== 'undefined' &&
+                (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            )
+                ? 'http://localhost:3001/api'
+                : 'https://healthchain-backend-kz6q.onrender.com/api';
+
+            const neonResponse = await fetch(`${apiBaseUrl}/auth/patient-profile`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    fullName: profilePayload.fullName,
+                    displayName: profilePayload.displayName,
+                    name: profilePayload.name,
+                    email: profilePayload.email,
+                    phoneNumber: profilePayload.phoneNumber,
+                    phone: profilePayload.phone,
+                    abhaId: profilePayload.abhaId,
+                    dob: profilePayload.dob,
+                    gender: profilePayload.gender,
+                    bloodGroup: profilePayload.bloodGroup,
+                    allergies: profilePayload.allergies,
+                    photoURL: profilePayload.photoURL
+                })
+            });
+
+            const neonData = await neonResponse.json();
+
+            if (!neonResponse.ok || !neonData.success || !neonData.user) {
+                throw new Error(
+                    neonData.message || 'Neon PostgreSQL rejected the profile update.'
+                );
+            }
+
+            // 2. Use the authoritative Neon response to synchronize application state.
+            const neonUser = neonData.user;
+
             const syncedUser = {
-                ...currentAuthUser,
-                ...profilePayload,
-                id: currentAuthUser.id || currentAuthUser.uid || `usr_${Date.now()}`,
-                uid: currentAuthUser.uid || currentAuthUser.id || `usr_${Date.now()}`,
+                ...useAuthStore.getState().user,
+                ...neonUser,
+                id: neonUser.id || neonUser.uid,
+                uid: neonUser.uid || neonUser.id,
                 role: 'patient',
-                profileComplete: true,
-                onboardingComplete: true
+                loginMethod,
+                authProvider: useAuthStore.getState().user?.authProvider || 'google.com',
+                globalPatientId: finalGId,
+                linkedHospitals,
+                connectedDoctors,
+                isVerified: true,
+                photoURL: neonUser.photoURL || photoURL || '',
+                profileComplete: !!neonUser.profileComplete,
+                onboardingComplete: !!neonUser.onboardingComplete
             };
+
             await setCurrentUser(syncedUser, 'patient');
 
-            // 3. Update Firebase/Cloudflare if available
+            // 3. Update local cache only after Neon persistence succeeds.
+            const persistedProfile = {
+                ...profilePayload,
+                ...neonUser,
+                globalPatientId: finalGId,
+                linkedHospitals,
+                connectedDoctors,
+                isVerified: true,
+                updatedAt: new Date().toISOString()
+            };
+
+            localStorage.setItem(
+                STORAGE_PROFILE_KEY,
+                JSON.stringify(persistedProfile)
+            );
+
+            if (neonUser.phoneNumber || phoneNumber.trim()) {
+                localStorage.setItem(
+                    'hc_phone',
+                    neonUser.phoneNumber || phoneNumber.trim()
+                );
+            }
+
+            if (neonUser.email || email.trim()) {
+                localStorage.setItem(
+                    'hc_email',
+                    neonUser.email || email.trim()
+                );
+            }
+
+            if (neonUser.fullName || displayName.trim()) {
+                localStorage.setItem(
+                    'hc_name',
+                    neonUser.fullName || displayName.trim()
+                );
+            }
+
+            if (neonUser.photoURL || photoURL) {
+                localStorage.setItem(
+                    'hc_photo',
+                    neonUser.photoURL || photoURL
+                );
+            }
+
+            // 4. Keep Firebase profile sync for backward compatibility only.
             try {
                 if (firebaseUser) {
-                    await updateProfile(firebaseUser, { 
+                    await updateProfile(firebaseUser, {
                         displayName: displayName.trim(),
                         photoURL: photoURL || undefined
                     });
                 }
+
                 const targetUid = syncedUser.uid;
                 if (targetUid) {
                     const userRef = doc(db, 'users', targetUid);
-                    await setDoc(userRef, profilePayload, { merge: true });
+                    await setDoc(
+                        userRef,
+                        persistedProfile,
+                        { merge: true }
+                    );
                 }
-            } catch (backendErr) {
-                console.warn('[Profile Save Backend Sync Notice]', backendErr.message);
+            } catch (firebaseErr) {
+                console.warn(
+                    '[Profile Firebase Compatibility Sync Notice]',
+                    firebaseErr.message
+                );
             }
 
+            // Refresh local form values from authoritative Neon response.
+            setDisplayName(neonUser.fullName || neonUser.name || displayName);
+            setEmail(neonUser.email || email);
+            setPhoneNumber(neonUser.phoneNumber || neonUser.phone || phoneNumber);
+            setAbhaId(neonUser.abhaId || abhaId);
+            setDob(neonUser.dob || dob);
+            setGender(neonUser.gender || gender);
+            setBloodGroup(neonUser.bloodGroup || bloodGroup);
+            setPhotoURL(neonUser.photoURL || photoURL);
+
             setIsVerified(true);
-            toast.success('Your identity details have been saved successfully!');
+
+            toast.success(
+                'Your identity details have been saved to your HealthChain profile.'
+            );
         } catch (err) {
             console.error('Failed to save profile:', err);
-            toast.error('Failed to update identity profile');
+            toast.error(
+                err.message || 'Failed to update identity profile'
+            );
         } finally {
             setIsUpdating(false);
         }
