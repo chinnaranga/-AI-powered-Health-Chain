@@ -58,6 +58,7 @@ async function ensureColumns() {
         await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ`);
         await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rejected_by UUID`);
         await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ`);
+        await query(`ALTER TABLE patients ADD COLUMN IF NOT EXISTS global_patient_id VARCHAR(255)`);
     } catch (e) {
         console.warn('[Neon Migrations Notice] Column check notice:', e.message);
     }
