@@ -49,8 +49,13 @@ const useAuthStore = create((set, get) => ({
             onboardingComplete: !!(userData.onboardingComplete || userData.dob) 
         };
 
-        localStorage.setItem('hc_cf_jwt', userData.token || uid);
-        localStorage.setItem('hc_token', userData.token || uid);
+        const existingToken = localStorage.getItem('hc_token') || localStorage.getItem('hc_cf_jwt');
+        const sessionToken = userData.token || existingToken || null;
+
+        if (sessionToken) {
+            localStorage.setItem('hc_cf_jwt', sessionToken);
+            localStorage.setItem('hc_token', sessionToken);
+        }
         localStorage.setItem('hc_user_role', role);
         localStorage.setItem('hc_role', role);
         localStorage.setItem('hc_user', JSON.stringify(fullUser));
@@ -68,7 +73,7 @@ const useAuthStore = create((set, get) => ({
 
         set({
             user: fullUser,
-            token: userData.token || uid,
+            token: sessionToken,
             role,
             isAuthenticated: true,
             isLoading: false
