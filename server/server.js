@@ -45,6 +45,7 @@ import accessRoutes from './routes/access.js';
 import logRoutes from './routes/log.js';
 import smsRoutes from './routes/sms.js';
 import r2FilesRoutes from './routes/r2Files.js';
+import adminRoutes from './routes/admin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -140,6 +141,7 @@ app.use('/api', accessRoutes);
 app.use('/api', logRoutes);
 app.use('/api', smsRoutes);
 app.use('/api', r2FilesRoutes);
+app.use('/api', adminRoutes);
 
 // Database Compatibility Aliases
 app.get('/api/d1/records', (req, res, next) => recordRoutes(req, res, next));

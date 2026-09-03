@@ -36,6 +36,8 @@ const useAuthStore = create((set, get) => ({
             id: uid, 
             uid, 
             role, 
+            status: userData.status || 'active',
+            doctorId: userData.doctorId || undefined,
             name: userData.name || userData.displayName || userData.fullName || localStorage.getItem('hc_name') || '',
             displayName: userData.displayName || userData.name || userData.fullName || localStorage.getItem('hc_name') || '',
             fullName: userData.fullName || userData.name || userData.displayName || localStorage.getItem('hc_name') || '',
@@ -107,6 +109,10 @@ const useAuthStore = create((set, get) => ({
                 bloodGroup: savedProfile?.bloodGroup || user.bloodGroup || '',
                 abhaId: savedProfile?.abhaId || user.abhaId || '',
                 role: targetRole,
+                status: user.status || data.status || 'active',
+                doctorId: user.doctorId || undefined,
+                specialty: user.specialty || '',
+                licenseNumber: user.licenseNumber || '',
                 loginMethod: 'email',
                 authProvider: 'password',
                 profileComplete: !!(savedProfile?.profileComplete || (user.name && email)),
@@ -184,6 +190,15 @@ const useAuthStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
+            if (!googleUserPayload) {
+                const { GoogleAuthProvider, signInWithPopup } = await import('../firebase/auth');
+                const { auth } = await import('../firebase/config');
+                const provider = new GoogleAuthProvider();
+                provider.setCustomParameters({ prompt: 'select_account' });
+                const result = await signInWithPopup(auth, provider);
+                googleUserPayload = result?.user || null;
+            }
+
             const googleName = googleUserPayload?.displayName || localStorage.getItem('hc_name') || '';
             const googleEmail = googleUserPayload?.email || localStorage.getItem('hc_email') || '';
             const googlePhoto = googleUserPayload?.photoURL || localStorage.getItem('hc_photo') || '';

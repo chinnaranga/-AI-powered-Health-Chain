@@ -19,7 +19,7 @@ const getPatientForUser = async (userId) => {
 const getDoctorForUser = async (userId) => {
     if (!userId) return null;
     return getDb(
-        `SELECT d.*, u.email, u.name AS user_name, u.phone AS user_phone
+        `SELECT d.*, u.email, u.name AS user_name, u.phone AS user_phone, u.status AS user_status
          FROM doctors d
          JOIN users u ON u.id = d.user_id
          WHERE d.user_id = ?
@@ -39,6 +39,16 @@ export const createAccessRequest = async (req, res) => {
             return res.status(403).json({
                 success: false,
                 message: 'Authenticated user is not registered as a doctor.'
+            });
+        }
+
+        if (doctor.user_status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_APPROVAL_REQUIRED',
+                message: doctor.user_status === 'pending'
+                    ? 'Your doctor account is awaiting administrator approval before you can request patient access.'
+                    : 'Your doctor account registration is not active.'
             });
         }
 

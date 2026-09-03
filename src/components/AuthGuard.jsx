@@ -69,16 +69,27 @@ export default function AuthGuard({ children, basePath }) {
                 }
             }
         } else if (role === 'doctor') {
-            if (isNewUser && !isProfileComplete) {
-                if (currentPath !== '/dashboard/doctor/onboarding' && currentPath !== '/doctor/onboarding') {
-                    console.info('[AuthGuard] New doctor registration, navigating to onboarding.');
-                    navigate('/doctor/onboarding', { replace: true });
+            const docStatus = user?.status || 'active';
+            if (docStatus === 'pending') {
+                if (currentPath !== '/doctor/pending-approval') {
+                    console.info('[AuthGuard] Doctor account pending approval, redirecting to status screen.');
+                    navigate('/doctor/pending-approval', { replace: true });
                     return;
                 }
-                if (currentPath === '/dashboard/doctor/onboarding' || currentPath === '/doctor/onboarding') {
+                return;
+            } else if (docStatus === 'rejected') {
+                if (currentPath !== '/doctor/rejected') {
+                    console.info('[AuthGuard] Doctor account rejected, redirecting.');
+                    navigate('/doctor/rejected', { replace: true });
                     return;
                 }
+                return;
             } else {
+                // Doctor is active
+                if (currentPath === '/doctor/pending-approval' || currentPath === '/doctor/rejected') {
+                    navigate('/doctor/dashboard', { replace: true });
+                    return;
+                }
                 if (!isProfileComplete && !sessionStorage.getItem('hc_doc_profile_notice_sent')) {
                     sessionStorage.setItem('hc_doc_profile_notice_sent', 'true');
                     toast.info('Profile Notice: You can complete missing clinical details in Doctor Settings.');
@@ -109,11 +120,13 @@ export default function AuthGuard({ children, basePath }) {
             expectedRole = basePath.split('/')[2];
         } else if (basePath?.startsWith('/patient')) {
             expectedRole = 'patient';
+        } else if (basePath?.startsWith('/doctor')) {
+            expectedRole = 'doctor';
         }
 
         if (expectedRole && role !== expectedRole) {
             console.warn(`[AuthGuard] Role mismatch! User has role: ${role}, attempted to access: ${expectedRole}. Redirecting to correct dashboard.`);
-            const targetRedirect = role === 'patient' ? '/patient/dashboard' : `/dashboard/${role}`;
+            const targetRedirect = role === 'patient' ? '/patient/dashboard' : (role === 'doctor' ? '/doctor/dashboard' : `/dashboard/${role}`);
             navigate(targetRedirect, { replace: true });
             return;
         }
@@ -130,6 +143,8 @@ export default function AuthGuard({ children, basePath }) {
         expectedRole = basePath.split('/')[2];
     } else if (basePath?.startsWith('/patient')) {
         expectedRole = 'patient';
+    } else if (basePath?.startsWith('/doctor')) {
+        expectedRole = 'doctor';
     }
     const isProfileComplete = FEATURES.onboarding === false ? true : (user?.profileComplete === true || user?.onboardingComplete === true);
 
@@ -148,8 +163,11 @@ export default function AuthGuard({ children, basePath }) {
                     isAuthorized = (!expectedRole || role === expectedRole);
                 }
             } else if (role === 'doctor') {
-                if (currentPath === '/dashboard/doctor/onboarding' || currentPath === '/doctor/onboarding') {
-                    isAuthorized = true;
+                const docStatus = user?.status || 'active';
+                if (docStatus === 'pending') {
+                    isAuthorized = currentPath === '/doctor/pending-approval';
+                } else if (docStatus === 'rejected') {
+                    isAuthorized = currentPath === '/doctor/rejected';
                 } else {
                     isAuthorized = (!expectedRole || role === expectedRole);
                 }

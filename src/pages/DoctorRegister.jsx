@@ -154,13 +154,15 @@ export default function DoctorRegister() {
                 phone: form.phone,
                 hospital: form.hospital,
                 department: form.department,
+                specialty: form.department || 'General Medicine',
+                licenseNumber: form.license,
                 license: form.license
             };
-            await register(payload);
+            const res = await register(payload);
             sessionStorage.setItem('hc_is_new_user', 'true');
             setShowSuccess(true);
-            toast.success('Doctor Node enrolled. Proceeding to onboarding...');
-            setTimeout(() => navigate('/dashboard/doctor/onboarding', { replace: true }), 1500);
+            toast.success('Doctor account submitted! Awaiting administrator approval.');
+            setTimeout(() => navigate('/doctor/pending-approval', { replace: true }), 1200);
         } catch (err) {
             toast.error(err.message || 'Enrolment failed');
         }
@@ -172,42 +174,17 @@ export default function DoctorRegister() {
             const result = await signInWithPopup(auth, provider);
             const user = result.user;
 
-            const googlePayload = {
-                uid: user.uid,
-                name: user.displayName,
-                email: user.email,
-                photo: user.photoURL,
-                role: 'doctor',
-                hospital: form.hospital || 'Central General Hospital',
-                department: form.department || 'Cardiology',
-                license: form.license || 'GEN-MED-LICENSE'
-            };
+            const { loginGoogle } = useAuthStore.getState();
+            const res = await loginGoogle('doctor', user);
+            const userStatus = res?.user?.status || res?.status || 'pending';
 
-            let data;
-            try {
-                const res = await fetch('/api/google-auth', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(googlePayload),
-                });
-                data = await res.json();
-                if (!res.ok) throw new Error(data.error || data.message || 'Google sign-up failed');
-            } catch (apiErr) {
-                console.warn('Backend API offline, executing googleAuthFallback offline support:', apiErr);
-                data = await googleAuthFallback(user, 'doctor', {
-                    hospital: form.hospital || 'Central General Hospital',
-                    department: form.department || 'Cardiology',
-                    license: form.license || 'GEN-MED-LICENSE'
-                });
+            if (userStatus === 'pending') {
+                toast.info('Google doctor registration submitted! Awaiting administrator approval.');
+                navigate('/doctor/pending-approval', { replace: true });
+            } else {
+                toast.success(`Welcome Dr. ${user.displayName?.split(' ')[0] || ''}!`);
+                navigate('/doctor/dashboard', { replace: true });
             }
-
-            sessionStorage.setItem('hc_is_new_user', 'true');
-            localStorage.setItem('hc_token', data.token);
-            localStorage.setItem('hc_role', data.role);
-            if (data.walletAddress) localStorage.setItem('hc_wallet', data.walletAddress);
-            
-            toast.success(`Doctor account verified for Dr. ${user.displayName?.split(' ')[0] || 'you'}!`);
-            navigate('/doctor/onboarding');
         } catch (err) {
             console.error(err);
             if (err.code !== 'auth/popup-closed-by-user') {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    LayoutDashboard, Users, Activity, Boxes, Shield, Terminal, Search,
+    LayoutDashboard, Users, Activity, Boxes, Shield, Terminal, Search, Stethoscope,
     AlertTriangle, Cpu, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight,
     ShieldAlert, Key, Zap, FileText, Briefcase
 } from 'lucide-react';
@@ -15,6 +15,7 @@ const adminNavItems = [
         section: 'SYSTEM CONTROL',
         items: [
             { to: '', icon: LayoutDashboard, label: 'Overview', end: true },
+            { to: 'doctor-requests', icon: Stethoscope, label: 'Doctor Approvals' },
             { to: 'user-management', icon: Users, label: 'User Directory' },
             { to: 'health', icon: Activity, label: 'System Health' },
         ]
@@ -145,7 +146,7 @@ export default function AdminSidebar({ sidebarOpen, setSidebarOpen }) {
                                 return (
                                     <NavLink
                                         key={item.label}
-                                        to={item.to ? `/dashboard/admin/${item.to}` : '/dashboard/admin'}
+                                        to={item.to ? `/admin/${item.to}` : '/admin/dashboard'}
                                         end={item.end}
                                         onClick={handleLinkClick}
                                         className={({ isActive }) =>

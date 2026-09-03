@@ -8,21 +8,27 @@ import ResetPasswordModal from '../components/ResetPasswordModal';
 
 export default function DoctorLogin() {
     const navigate = useNavigate();
-    const { login, loginGoogle, isLoading, isAuthenticated, role } = useAuthStore();
+    const { user, login, loginGoogle, isLoading, isAuthenticated, role } = useAuthStore();
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
     const [isResetOpen, setIsResetOpen] = useState(false);
 
     useEffect(() => {
         if (isAuthenticated && !isLoading) {
             if (role === 'doctor') {
-                navigate('/doctor/dashboard', { replace: true });
+                if (user?.status === 'pending') {
+                    navigate('/doctor/pending-approval', { replace: true });
+                } else if (user?.status === 'rejected') {
+                    navigate('/doctor/rejected', { replace: true });
+                } else {
+                    navigate('/doctor/dashboard', { replace: true });
+                }
             } else if (role) {
                 navigate(`/dashboard/${role}`, { replace: true });
             } else {
                 navigate('/select-role', { replace: true });
             }
         }
-    }, [isAuthenticated, role, isLoading, navigate]);
+    }, [isAuthenticated, role, isLoading, user, navigate]);
 
     const [step, setStep] = useState(1);
     
@@ -55,7 +61,18 @@ export default function DoctorLogin() {
         if (authCode.length < 6) return toast.error('Invalid 2FA code');
         
         try {
-            await login(email, password, 'doctor');
+            const res = await login(email, password, 'doctor');
+            const userStatus = res?.user?.status || res?.status || 'active';
+            if (userStatus === 'pending') {
+                toast.info('Your doctor account is awaiting administrator approval.');
+                navigate('/doctor/pending-approval', { replace: true });
+                return;
+            }
+            if (userStatus === 'rejected') {
+                toast.error('Doctor registration was not approved.');
+                navigate('/doctor/rejected', { replace: true });
+                return;
+            }
             toast.success('Enterprise Access Granted');
             navigate('/doctor/dashboard');
         } catch (err) {
@@ -72,7 +89,18 @@ export default function DoctorLogin() {
     const handleGoogleSignIn = async () => {
         try {
             setIsGoogleLoading(true);
-            await loginGoogle('doctor');
+            const res = await loginGoogle('doctor');
+            const userStatus = res?.user?.status || res?.status || 'active';
+            if (userStatus === 'pending') {
+                toast.info('Your doctor account is awaiting administrator approval.');
+                navigate('/doctor/pending-approval', { replace: true });
+                return;
+            }
+            if (userStatus === 'rejected') {
+                toast.error('Doctor registration was not approved.');
+                navigate('/doctor/rejected', { replace: true });
+                return;
+            }
             toast.success('Enterprise Access Granted');
             navigate('/doctor/dashboard');
         } catch (err) {

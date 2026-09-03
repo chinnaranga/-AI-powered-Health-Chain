@@ -211,6 +211,119 @@ export const getRecords = async (req, res) => {
 };
 
 /**
+ * DELETE /api/records/:id - Delete a clinical record
+ */
+export const deleteRecord = async (req, res) => {
+    try {
+        const recordId = req.params.id;
+        const requesterId = req.user?.uid || req.user?.userId;
+        const requesterRole = req.user?.role || 'patient';
+
+        if (!recordId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Record ID is required'
+            });
+        }
+
+        if (!requesterId) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authenticated user is required'
+            });
+        }
+
+        const rows = await queryDb(
+            `SELECT id, patient_id, doctor_id, hospital_id, title, category, r2_file_id, created_by
+             FROM medical_records
+             WHERE id = ?
+             LIMIT 1`,
+            [recordId]
+        );
+
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Medical record not found'
+            });
+        }
+
+        const record = rows[0];
+
+        const isOwner = String(record.patient_id) === String(requesterId);
+        const isCreator = String(record.created_by || '') === String(requesterId);
+        const isDoctorOwner =
+            requesterRole === 'doctor' &&
+            String(record.doctor_id || '') === String(requesterId);
+
+        const isAdmin =
+            requesterRole === 'hospital_admin' ||
+            requesterRole === 'admin' ||
+            requesterRole === 'super_admin';
+
+        if (!isOwner && !isCreator && !isDoctorOwner && !isAdmin) {
+            return res.status(403).json({
+                success: false,
+                error: 'You are not authorized to delete this medical record'
+            });
+        }
+
+        await runDb(
+            `DELETE FROM medical_records WHERE id = ?`,
+            [recordId]
+        );
+
+        await writeAuditEvent({
+            userId: requesterId,
+            role: requesterRole,
+            hospitalId: record.hospital_id || 'default_hospital',
+            action: 'CLINICAL_RECORD_DELETE',
+            resourceType: 'medical_record',
+            resourceId: recordId,
+            details: {
+                patientId: record.patient_id,
+                title: record.title,
+                category: record.category,
+                r2FileId: record.r2_file_id || null
+            },
+            status: 'SUCCESS'
+        });
+
+        realtimeService.emitToChannel(
+            `patient:${record.patient_id}`,
+            'RECORD_DELETED',
+            {
+                id: recordId,
+                patientId: record.patient_id
+            }
+        );
+
+        if (record.hospital_id) {
+            realtimeService.emitToHospital(
+                record.hospital_id,
+                'RECORD_DELETED',
+                {
+                    id: recordId,
+                    patientId: record.patient_id
+                }
+            );
+        }
+
+        return res.json({
+            success: true,
+            id: recordId,
+            message: 'Medical record deleted successfully'
+        });
+    } catch (err) {
+        console.error('[Delete Record Error]:', err);
+        return res.status(500).json({
+            success: false,
+            error: err.message || 'Failed to delete medical record'
+        });
+    }
+};
+
+/**
  * 3. GET /api/proxy-file - Secure storage proxy
  */
 export const proxyFile = async (req, res) => {
@@ -252,5 +365,6 @@ export const proxyFile = async (req, res) => {
 export default {
     addRecord,
     getRecords,
+    deleteRecord,
     proxyFile
 };

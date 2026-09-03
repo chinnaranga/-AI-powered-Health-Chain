@@ -223,10 +223,21 @@ export const recordService = {
      * Delete a record
      */
     deleteRecord: async (recordId) => {
+        if (!recordId) {
+            throw new Error('Record ID is required');
+        }
+
         try {
-            return await apiClient.delete(`/records/${recordId}`);
+            const response = await apiClient.delete(`/records/${recordId}`);
+
+            if (!response?.success) {
+                throw new Error(response?.error || response?.message || 'Failed to delete medical record');
+            }
+
+            return response;
         } catch (e) {
-            return recordId;
+            console.error('[recordService] deleteRecord error:', e);
+            throw e;
         }
     }
 };

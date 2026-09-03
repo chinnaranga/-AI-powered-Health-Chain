@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS users (
     hospital_id UUID,
     department_id UUID,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
+    approved_by UUID,
+    approved_at TIMESTAMPTZ,
+    rejected_by UUID,
+    rejected_at TIMESTAMPTZ,
     email_verified BOOLEAN NOT NULL DEFAULT false,
     verification_token VARCHAR(255),
     onboarding_complete BOOLEAN NOT NULL DEFAULT false,
@@ -479,6 +483,7 @@ CREATE TABLE IF NOT EXISTS storage_usage (
 -- ====================================================================
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status);
 CREATE INDEX IF NOT EXISTS idx_patients_user_id ON patients(user_id);
 CREATE INDEX IF NOT EXISTS idx_patients_hospital_id ON patients(hospital_id);
 CREATE INDEX IF NOT EXISTS idx_doctors_user_id ON doctors(user_id);

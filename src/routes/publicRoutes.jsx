@@ -17,6 +17,8 @@ const PatientVerifyOTP = lazy(() => import('../pages/PatientVerifyOTP'));
 const DoctorVerifyOTP = lazy(() => import('../pages/DoctorVerifyOTP'));
 const PatientOnboarding = lazy(() => import('../pages/PatientOnboarding'));
 const DoctorOnboarding = lazy(() => import('../pages/DoctorOnboarding'));
+const DoctorPendingApproval = lazy(() => import('../pages/DoctorPendingApproval'));
+const DoctorRejected = lazy(() => import('../pages/DoctorRejected'));
 const SelectRole = lazy(() => import('../pages/SelectRole'));
 const RoleMismatch = lazy(() => import('../pages/RoleMismatch'));
 const VerifyEmail = lazy(() => import('../pages/VerifyEmail'));
@@ -80,6 +82,8 @@ export const publicRoutes = [
     <Route key="patient-onboarding" path="/patient/onboarding" element={<PatientOnboarding />} />,
     <Route key="doctor-onboarding-public" path="/doctor/onboarding" element={<DoctorOnboarding />} />,
     <Route key="doctor-onboarding-dash" path="/dashboard/doctor/onboarding" element={<DoctorOnboarding />} />,
+    <Route key="doctor-pending-approval" path="/doctor/pending-approval" element={<DoctorPendingApproval />} />,
+    <Route key="doctor-rejected" path="/doctor/rejected" element={<DoctorRejected />} />,
     <Route key="register" path="/register" element={<><Navbar /><PatientRegister /></>} />,
     <Route key="register-patient" path="/register/patient" element={<><Navbar /><PatientRegister /></>} />,
     <Route key="patient-register" path="/patient/register" element={<><Navbar /><PatientRegister /></>} />,

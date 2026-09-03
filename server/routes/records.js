@@ -3,7 +3,7 @@ import db, { queryDb, getDb, runDb } from '../config/db.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
 import { writeAuditEvent } from '../services/auditLogger.js';
 import { realtimeService } from '../services/realtimeService.js';
-import { addRecord, getRecords } from '../controllers/recordController.js';
+import { addRecord, getRecords, deleteRecord } from '../controllers/recordController.js';
 
 const router = express.Router();
 
@@ -12,6 +12,9 @@ router.get('/records', authMiddleware, getRecords);
 
 // POST /api/records - Create new multi-tenant clinical record in PostgreSQL
 router.post('/records', authMiddleware, addRecord);
+
+// DELETE /api/records/:id - Delete a clinical record
+router.delete('/records/:id', authMiddleware, deleteRecord);
 
 // GET /api/records/patient/:patientId - Direct patient records helper
 router.get('/records/patient/:patientId', authMiddleware, async (req, res) => {

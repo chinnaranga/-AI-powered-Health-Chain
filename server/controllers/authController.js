@@ -49,17 +49,19 @@ export const registerUser = async (req, res) => {
 
         const userName = name || extra.fullName || 'HealthChain User';
         const userPhone = phone || extra.phoneNumber || '';
+        const initialStatus = role === 'doctor' ? 'pending' : 'active';
 
         // Insert into Neon PostgreSQL users table
         const insertUserResult = await runDb(
             `INSERT INTO users (id, email, password_hash, name, phone, role, status, email_verified, onboarding_complete, created_at, updated_at)
-             VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, 'active', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-             RETURNING id, email, name, role, created_at`,
-            [normalizedEmail, passwordHash, userName, userPhone, role]
+             VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, ?, true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             RETURNING id, email, name, role, status, created_at`,
+            [normalizedEmail, passwordHash, userName, userPhone, role, initialStatus]
         );
 
         const createdUser = insertUserResult.rows?.[0] || await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [normalizedEmail]);
         const userId = createdUser.id;
+        let doctorId = null;
 
         // Populate related role-specific profile in PostgreSQL
         if (role === 'patient') {
@@ -70,12 +72,14 @@ export const registerUser = async (req, res) => {
                 [userId, hospitalId !== 'default_hospital' ? hospitalId : null, abhaId || null, userName, userPhone]
             );
         } else if (role === 'doctor') {
-            await runDb(
+            const docInsert = await runDb(
                 `INSERT INTO doctors (id, user_id, hospital_id, specialty, license_number, created_at, updated_at)
                  VALUES (gen_random_uuid(), ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                 ON CONFLICT (user_id) DO NOTHING`,
+                 ON CONFLICT (user_id) DO NOTHING
+                 RETURNING id`,
                 [userId, hospitalId !== 'default_hospital' ? hospitalId : null, specialty || 'General Medicine', licenseNumber || `LIC-${Date.now()}`]
             );
+            doctorId = docInsert.rows?.[0]?.id || null;
         }
 
         // Assign User Role
@@ -96,10 +100,10 @@ export const registerUser = async (req, res) => {
             userId,
             role,
             hospitalId,
-            action: 'USER_REGISTERED',
+            action: role === 'doctor' ? 'DOCTOR_REGISTERED_PENDING' : 'USER_REGISTERED',
             resourceType: 'user',
             resourceId: userId,
-            details: { email: normalizedEmail, role, name: userName },
+            details: { email: normalizedEmail, role, name: userName, status: initialStatus, specialty, licenseNumber },
             ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
             userAgent: req.headers['user-agent'] || 'HealthChain Client',
             status: 'SUCCESS'
@@ -115,6 +119,10 @@ export const registerUser = async (req, res) => {
             phoneNumber: userPhone,
             phone: userPhone,
             role,
+            status: initialStatus,
+            doctorId: doctorId || undefined,
+            specialty: specialty || '',
+            licenseNumber: licenseNumber || '',
             hospitalId,
             tenantId: hospitalId,
             profileComplete: true,
@@ -126,6 +134,7 @@ export const registerUser = async (req, res) => {
             success: true,
             token,
             role,
+            status: initialStatus,
             user: userData
         });
     } catch (error) {
@@ -180,6 +189,7 @@ export const loginUser = async (req, res) => {
         }
 
         const userRole = user.role || role;
+        const userStatus = user.status || 'active';
         const hospitalId = user.hospital_id || 'default_hospital';
         const token = generateToken(user, userRole, hospitalId);
 
@@ -194,17 +204,26 @@ export const loginUser = async (req, res) => {
         }
 
         // Audit Log login event
+        let auditAction = 'USER_LOGIN';
+        if (userRole === 'doctor') {
+            if (userStatus === 'pending') {
+                auditAction = 'DOCTOR_LOGIN_PENDING';
+            } else if (userStatus === 'rejected') {
+                auditAction = 'DOCTOR_LOGIN_REJECTED';
+            }
+        }
+
         await writeAuditEvent({
             userId: user.id,
             role: userRole,
             hospitalId,
-            action: 'USER_LOGIN',
+            action: auditAction,
             resourceType: 'user',
             resourceId: user.id,
-            details: { email: normalizedEmail, role: userRole },
+            details: { email: normalizedEmail, role: userRole, status: userStatus },
             ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
             userAgent: req.headers['user-agent'] || 'HealthChain Client',
-            status: 'SUCCESS'
+            status: userStatus === 'rejected' ? 'REJECTED' : 'SUCCESS'
         });
 
         const fullUserData = {
@@ -217,8 +236,10 @@ export const loginUser = async (req, res) => {
             phoneNumber: user.phone || profileDetails.contact_phone || '',
             phone: user.phone || profileDetails.contact_phone || '',
             role: userRole,
+            status: userStatus,
             hospitalId,
             tenantId: hospitalId,
+            doctorId: profileDetails.id || undefined,
             abhaId: profileDetails.abha_id || '',
             dob: profileDetails.dob || '',
             gender: profileDetails.gender || '',
@@ -226,6 +247,8 @@ export const loginUser = async (req, res) => {
             allergies: profileDetails.allergies || '',
             specialty: profileDetails.specialty || '',
             licenseNumber: profileDetails.license_number || '',
+            approvedAt: user.approved_at || null,
+            rejectedAt: user.rejected_at || null,
             termsAcceptedVersion: user.terms_accepted_version || null,
             termsConsentAt: user.terms_consent_at || null,
             profileComplete: true,
@@ -237,6 +260,7 @@ export const loginUser = async (req, res) => {
             success: true,
             token,
             role: userRole,
+            status: userStatus,
             user: fullUserData
         });
     } catch (error) {
@@ -272,12 +296,15 @@ export const googleLogin = async (req, res) => {
             [email]
         );
 
+        let isNewUser = false;
         if (!user) {
+            isNewUser = true;
             const salt = await bcrypt.genSalt(10);
             const passwordHash = await bcrypt.hash(
                 `GoogleAuth_${Date.now()}`,
                 salt
             );
+            const initialStatus = role === 'doctor' ? 'pending' : 'active';
 
             const insertResult = await runDb(
                 `INSERT INTO users (
@@ -300,7 +327,7 @@ export const googleLogin = async (req, res) => {
                     ?,
                     ?,
                     ?,
-                    'active',
+                    ?,
                     true,
                     true,
                     CURRENT_TIMESTAMP,
@@ -312,7 +339,8 @@ export const googleLogin = async (req, res) => {
                     passwordHash,
                     name,
                     googleUser.phoneNumber || googleUser.phone || '',
-                    role
+                    role,
+                    initialStatus
                 ]
             );
 
@@ -348,6 +376,37 @@ export const googleLogin = async (req, res) => {
                     ]
                 );
             }
+        }
+
+        // Ensure an existing doctor account has a doctor profile row.
+        if ((user.role || role) === 'doctor') {
+            await runDb(
+                `INSERT INTO doctors (
+                    id,
+                    user_id,
+                    hospital_id,
+                    specialty,
+                    license_number,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                )
+                ON CONFLICT (user_id) DO NOTHING`,
+                [
+                    user.id,
+                    user.hospital_id || null,
+                    googleUser.specialty || 'General Medicine',
+                    googleUser.licenseNumber || `GOOGLE-LIC-${Date.now()}`
+                ]
+            );
         }
 
         // Ensure an existing patient account has a patient profile row.
@@ -391,14 +450,40 @@ export const googleLogin = async (req, res) => {
                 `SELECT * FROM patients WHERE user_id = ? LIMIT 1`,
                 [user.id]
             ) || {};
+        } else if ((user.role || role) === 'doctor') {
+            profileData = await getDb(
+                `SELECT * FROM doctors WHERE user_id = ? LIMIT 1`,
+                [user.id]
+            ) || {};
         }
 
         const userRole = user.role || role;
+        const userStatus = user.status || 'active';
         const token = generateToken(
             user,
             userRole,
             user.hospital_id || 'default_hospital'
         );
+
+        // Audit Log
+        let auditAction = isNewUser ? (userRole === 'doctor' ? 'DOCTOR_REGISTERED_PENDING' : 'USER_REGISTERED') : 'USER_LOGIN';
+        if (!isNewUser && userRole === 'doctor') {
+            if (userStatus === 'pending') auditAction = 'DOCTOR_LOGIN_PENDING';
+            else if (userStatus === 'rejected') auditAction = 'DOCTOR_LOGIN_REJECTED';
+        }
+
+        await writeAuditEvent({
+            userId: user.id,
+            role: userRole,
+            hospitalId: user.hospital_id || 'default_hospital',
+            action: auditAction,
+            resourceType: 'user',
+            resourceId: user.id,
+            details: { email, role: userRole, status: userStatus, provider: 'google.com' },
+            ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+            userAgent: req.headers['user-agent'] || 'HealthChain Client',
+            status: userStatus === 'rejected' ? 'REJECTED' : 'SUCCESS'
+        });
 
         const userData = {
             id: user.id,
@@ -411,8 +496,10 @@ export const googleLogin = async (req, res) => {
             phone: user.phone || profileData.contact_phone || '',
             photoURL: googleUser.photoURL || '',
             role: userRole,
+            status: userStatus,
             hospitalId: user.hospital_id || 'default_hospital',
             tenantId: user.hospital_id || 'default_tenant',
+            doctorId: profileData.id || undefined,
 
             // Authoritative patient profile fields from Neon.
             abhaId: profileData.abha_id || '',
@@ -420,6 +507,10 @@ export const googleLogin = async (req, res) => {
             gender: profileData.gender || '',
             bloodGroup: profileData.blood_group || '',
             allergies: profileData.allergies || '',
+            specialty: profileData.specialty || '',
+            licenseNumber: profileData.license_number || '',
+            approvedAt: user.approved_at || null,
+            rejectedAt: user.rejected_at || null,
 
             loginMethod: 'google',
             authProvider: 'google.com',
@@ -438,6 +529,7 @@ export const googleLogin = async (req, res) => {
             success: true,
             token,
             role: userRole,
+            status: userStatus,
             user: userData
         });
     } catch (error) {
@@ -481,8 +573,10 @@ export const getMe = async (req, res) => {
             phoneNumber: user.phone || profileData.contact_phone || '',
             phone: user.phone || profileData.contact_phone || '',
             role: user.role,
+            status: user.status || 'active',
             hospitalId: user.hospital_id || 'default_hospital',
             tenantId: user.hospital_id || 'default_tenant',
+            doctorId: profileData.id || undefined,
             abhaId: profileData.abha_id || '',
             dob: profileData.dob || '',
             gender: profileData.gender || '',
@@ -490,6 +584,8 @@ export const getMe = async (req, res) => {
             allergies: profileData.allergies || '',
             specialty: profileData.specialty || '',
             licenseNumber: profileData.license_number || '',
+            approvedAt: user.approved_at || null,
+            rejectedAt: user.rejected_at || null,
             termsAcceptedVersion: user.terms_accepted_version || null,
             termsConsentAt: user.terms_consent_at || null,
             profileComplete: true,
