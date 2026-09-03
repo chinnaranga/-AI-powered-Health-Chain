@@ -320,6 +320,7 @@ CREATE TABLE IF NOT EXISTS documents (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+
 -- 21. Consents Table (Patient-Controlled Data Sharing & Revocation)
 CREATE TABLE IF NOT EXISTS consents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -334,6 +335,83 @@ CREATE TABLE IF NOT EXISTS consents (
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+-- 21.5 Doctor-Patient Access Requests
+CREATE TABLE IF NOT EXISTS access_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    doctor_id UUID NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
+    hospital_id UUID REFERENCES hospitals(id) ON DELETE SET NULL,
+    department VARCHAR(150),
+    reason VARCHAR(500),
+    duration VARCHAR(100) DEFAULT '1 hour',
+    urgency VARCHAR(50) DEFAULT 'Normal',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'used')),
+    patient_name VARCHAR(255),
+    patient_email VARCHAR(255),
+    patient_phone VARCHAR(100),
+    global_patient_id VARCHAR(255),
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 21.6 Temporary OTP Sessions
+CREATE TABLE IF NOT EXISTS otp_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    access_request_id UUID NOT NULL REFERENCES access_requests(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    doctor_id UUID NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
+    otp_hash TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    verified_at TIMESTAMPTZ,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 21.7 Active Doctor Access Sessions
+CREATE TABLE IF NOT EXISTS active_access_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    access_request_id UUID NOT NULL REFERENCES access_requests(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    doctor_id UUID NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
+    consent_id UUID REFERENCES consents(id) ON DELETE SET NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_requests_patient
+    ON access_requests(patient_id);
+
+CREATE INDEX IF NOT EXISTS idx_access_requests_doctor
+    ON access_requests(doctor_id);
+
+CREATE INDEX IF NOT EXISTS idx_access_requests_status
+    ON access_requests(status);
+
+CREATE INDEX IF NOT EXISTS idx_access_requests_created
+    ON access_requests(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_otp_sessions_request
+    ON otp_sessions(access_request_id);
+
+CREATE INDEX IF NOT EXISTS idx_otp_sessions_active
+    ON otp_sessions(active, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_active_access_sessions_patient
+    ON active_access_sessions(patient_id);
+
+CREATE INDEX IF NOT EXISTS idx_active_access_sessions_doctor
+    ON active_access_sessions(doctor_id);
+
+CREATE INDEX IF NOT EXISTS idx_active_access_sessions_expiry
+    ON active_access_sessions(expires_at);
 
 -- 22. Terms Acceptance Table (Authoritative Server-Controlled Record)
 CREATE TABLE IF NOT EXISTS terms_acceptance (

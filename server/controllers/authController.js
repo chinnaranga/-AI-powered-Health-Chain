@@ -251,62 +251,201 @@ export const loginUser = async (req, res) => {
 export const googleLogin = async (req, res) => {
     try {
         const { googleUser = {}, role = 'patient' } = req.body;
-        const email = (googleUser.email || '').toLowerCase();
-        const name = googleUser.name || googleUser.fullName || 'HealthChain User';
+
+        const email = (googleUser.email || '').trim().toLowerCase();
+        const name = (
+            googleUser.name ||
+            googleUser.fullName ||
+            googleUser.displayName ||
+            'HealthChain User'
+        ).trim();
 
         if (!email) {
-            return res.status(400).json({ success: false, message: 'Google account email required.' });
+            return res.status(400).json({
+                success: false,
+                message: 'Google account email required.'
+            });
         }
 
-        let user = await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [email]);
+        let user = await getDb(
+            `SELECT * FROM users WHERE email = ? LIMIT 1`,
+            [email]
+        );
 
         if (!user) {
             const salt = await bcrypt.genSalt(10);
-            const passwordHash = await bcrypt.hash(`GoogleAuth_${Date.now()}`, salt);
+            const passwordHash = await bcrypt.hash(
+                `GoogleAuth_${Date.now()}`,
+                salt
+            );
 
             const insertResult = await runDb(
-                `INSERT INTO users (id, email, password_hash, name, role, status, email_verified, onboarding_complete, created_at, updated_at)
-                 VALUES (gen_random_uuid(), ?, ?, ?, ?, 'active', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                 RETURNING id, email, name, role`,
-                [email, passwordHash, name, role]
+                `INSERT INTO users (
+                    id,
+                    email,
+                    password_hash,
+                    name,
+                    phone,
+                    role,
+                    status,
+                    email_verified,
+                    onboarding_complete,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    'active',
+                    true,
+                    true,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                )
+                RETURNING *`,
+                [
+                    email,
+                    passwordHash,
+                    name,
+                    googleUser.phoneNumber || googleUser.phone || '',
+                    role
+                ]
             );
-            user = insertResult.rows?.[0] || await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [email]);
+
+            user = insertResult.rows?.[0] ||
+                await getDb(
+                    `SELECT * FROM users WHERE email = ? LIMIT 1`,
+                    [email]
+                );
 
             if (role === 'patient') {
                 await runDb(
-                    `INSERT INTO patients (id, user_id, full_name, created_at, updated_at)
-                     VALUES (gen_random_uuid(), ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                     ON CONFLICT (user_id) DO NOTHING`,
-                    [user.id, name]
+                    `INSERT INTO patients (
+                        id,
+                        user_id,
+                        full_name,
+                        contact_phone,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        gen_random_uuid(),
+                        ?,
+                        ?,
+                        ?,
+                        CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT (user_id) DO NOTHING`,
+                    [
+                        user.id,
+                        name,
+                        googleUser.phoneNumber || googleUser.phone || ''
+                    ]
                 );
             }
         }
 
-        const token = generateToken(user, user.role || role, 'default_hospital');
+        // Ensure an existing patient account has a patient profile row.
+        if ((user.role || role) === 'patient') {
+            await runDb(
+                `INSERT INTO patients (
+                    id,
+                    user_id,
+                    full_name,
+                    contact_phone,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    gen_random_uuid(),
+                    ?,
+                    ?,
+                    ?,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                )
+                ON CONFLICT (user_id) DO NOTHING`,
+                [
+                    user.id,
+                    name || user.name || 'HealthChain User',
+                    googleUser.phoneNumber || googleUser.phone || user.phone || ''
+                ]
+            );
+        }
+
+        // Re-read the authoritative Neon records after provisioning.
+        user = await getDb(
+            `SELECT * FROM users WHERE id = ? LIMIT 1`,
+            [user.id]
+        );
+
+        let profileData = {};
+
+        if ((user.role || role) === 'patient') {
+            profileData = await getDb(
+                `SELECT * FROM patients WHERE user_id = ? LIMIT 1`,
+                [user.id]
+            ) || {};
+        }
+
+        const userRole = user.role || role;
+        const token = generateToken(
+            user,
+            userRole,
+            user.hospital_id || 'default_hospital'
+        );
 
         const userData = {
             id: user.id,
             uid: user.id,
             email: user.email,
-            name: user.name,
-            fullName: user.name,
-            displayName: user.name,
-            role: user.role || role,
-            hospitalId: 'default_hospital',
-            tenantId: 'default_tenant',
-            profileComplete: true,
-            onboardingComplete: true,
+            name: user.name || profileData.full_name || name,
+            fullName: profileData.full_name || user.name || name,
+            displayName: profileData.full_name || user.name || name,
+            phoneNumber: user.phone || profileData.contact_phone || '',
+            phone: user.phone || profileData.contact_phone || '',
+            photoURL: googleUser.photoURL || '',
+            role: userRole,
+            hospitalId: user.hospital_id || 'default_hospital',
+            tenantId: user.hospital_id || 'default_tenant',
+
+            // Authoritative patient profile fields from Neon.
+            abhaId: profileData.abha_id || '',
+            dob: profileData.dob || '',
+            gender: profileData.gender || '',
+            bloodGroup: profileData.blood_group || '',
+            allergies: profileData.allergies || '',
+
+            loginMethod: 'google',
+            authProvider: 'google.com',
+            profileComplete: !!(
+                profileData.full_name &&
+                (user.phone || profileData.contact_phone) &&
+                user.email &&
+                profileData.dob &&
+                profileData.abha_id
+            ),
+            onboardingComplete: !!profileData.dob,
             token
         };
 
         res.json({
             success: true,
             token,
-            role: userData.role,
+            role: userRole,
             user: userData
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error('[Google Login Error]:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 };
 

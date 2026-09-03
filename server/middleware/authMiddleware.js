@@ -1,4 +1,6 @@
-import { adminAuth } from '../config/firebaseAdmin.js';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'healthchain-enterprise-jwt-secret-key-2026';
 
 export const authMiddleware = async (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -18,14 +20,17 @@ export const authMiddleware = async (req, res, next) => {
     }
 
     try {
-        const decodedToken = await adminAuth.verifyIdToken(token);
+        const decodedToken = jwt.verify(token, JWT_SECRET);
+
         req.user = decodedToken;
         req.tenantId = decodedToken.tenantId || decodedToken.hospitalId || 'default_tenant';
         req.hospitalId = decodedToken.hospitalId || 'default_hospital';
         req.role = decodedToken.role || 'patient';
+
         next();
     } catch (error) {
-        console.warn('[Auth] Invalid or expired token:', error.message);
+        console.warn('[Auth] Invalid or expired JWT:', error.message);
+
         return res.status(401).json({
             success: false,
             message: 'Invalid or expired authentication token.'
