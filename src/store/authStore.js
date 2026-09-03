@@ -83,7 +83,7 @@ const useAuthStore = create((set, get) => ({
     login: async (email, password, requestedRole = 'patient') => {
         set({ isLoading: true, error: null });
         try {
-            const data = await loginWithCloudflare(email, password);
+            const data = await loginWithCloudflare(email, password, requestedRole);
             const user = data.user || {};
             const uid = user.id || user.uid || `usr_${Date.now()}`;
             const targetRole = user.role || requestedRole;
@@ -136,6 +136,9 @@ const useAuthStore = create((set, get) => ({
 
             return { ...data, user: fullUser };
         } catch (err) {
+            set({ error: err.message, isLoading: false });
+            throw err;
+
             const uid = `usr_${Date.now().toString(36)}`;
             const savedProfile = (() => {
                 try {
@@ -379,8 +382,8 @@ const useAuthStore = create((set, get) => ({
     register: async (userData) => {
         set({ isLoading: true, error: null });
         try {
-            const { email, password, name, role = 'patient', hospitalId, phone } = userData;
-            const data = await registerWithCloudflare({ email, password, name, role, hospitalId });
+            const { email, password, name, role = 'patient', hospitalId, phone, specialty, licenseNumber } = userData;
+            const data = await registerWithCloudflare({ email, password, name, role, hospitalId, phone, specialty, licenseNumber });
             
             const user = data.user || { id: `user_${Date.now()}`, email, name, role };
             const uid = user.id || user.uid;

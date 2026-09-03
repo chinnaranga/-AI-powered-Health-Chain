@@ -5,11 +5,11 @@ const getBase = () => getApiBaseUrl();
 /**
  * Register a new user with email verification
  */
-export async function registerWithCloudflare({ email, password, name, role = 'patient', hospitalId = 'hosp_central_01' }) {
+export async function registerWithCloudflare({ email, password, name, role = 'patient', hospitalId = 'hosp_central_01', phone = '', specialty = '', licenseNumber = '' }) {
     const res = await fetch(`${getBase()}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name, role, hospitalId })
+        body: JSON.stringify({ email, password, name, role, hospitalId, phone, specialty, licenseNumber })
     });
 
     const data = await res.json();
@@ -41,11 +41,11 @@ export async function verifyEmailToken(token) {
 /**
  * Login user and store Cloudflare JWT session token
  */
-export async function loginWithCloudflare(email, password) {
+export async function loginWithCloudflare(email, password, role = 'patient') {
     const res = await fetch(`${getBase()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, role })
     });
 
     const data = await res.json();

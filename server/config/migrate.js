@@ -40,6 +40,10 @@ export async function runMigrations() {
         // Seed Default Roles & Permissions
         await seedDefaultRoles();
 
+        // Repair the built-in HealthChain administrator account if it was
+        // previously auto-provisioned with the default patient role.
+        await repairSystemAdministrator();
+
         console.log('[Neon Migrations] Complete: Database is up to date.');
         return { success: true, skipped: false };
     } catch (err) {
@@ -66,6 +70,51 @@ async function normalizeExistingDoctors() {
         console.log('[Neon Migrations] Existing doctor statuses normalized.');
     } catch (e) {
         console.warn('[Neon Migrations Notice] Doctor normalization notice:', e.message);
+    }
+}
+
+async function repairSystemAdministrator() {
+    const adminEmail = 'admin@healthchain.io';
+
+    try {
+        const admin = await query(
+            `SELECT id, role FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+            [adminEmail]
+        );
+
+        const user = admin.rows?.[0];
+        if (!user) {
+            console.log('[Neon Migrations] System administrator account not present; no repair needed.');
+            return;
+        }
+
+        if (user.role !== 'super_admin') {
+            await query(
+                `UPDATE users
+                 SET role = 'super_admin',
+                     status = 'active',
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $1`,
+                [user.id]
+            );
+            console.log('[Neon Migrations] System administrator role repaired.');
+        }
+
+        const roleResult = await query(
+            `SELECT id FROM roles WHERE name = 'super_admin' LIMIT 1`
+        );
+
+        const superAdminRoleId = roleResult.rows?.[0]?.id;
+        if (superAdminRoleId) {
+            await query(
+                `INSERT INTO user_roles (user_id, role_id)
+                 VALUES ($1, $2)
+                 ON CONFLICT (user_id, role_id) DO NOTHING`,
+                [user.id, superAdminRoleId]
+            );
+        }
+    } catch (e) {
+        console.warn('[Neon Migrations Notice] System administrator repair notice:', e.message);
     }
 }
 
