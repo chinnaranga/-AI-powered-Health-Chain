@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'healthchain-enterprise-jwt-secret-2026';
+const JWT_SECRET = process.env.JWT_SECRET || 'healthchain-enterprise-jwt-secret-key-2026';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'healthchain-enterprise-refresh-secret-2026';
 
 export const generateAccessToken = (user) => {
