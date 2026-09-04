@@ -236,11 +236,41 @@ router.get('/lab-results', authMiddleware, async (req, res) => {
 // USERS & PATIENTS PROFILE
 // ====================================================================
 
-// 8. GET /api/users - List users by role
+// 8. GET /api/users - Admin user directory only
 router.get('/users', authMiddleware, async (req, res) => {
     try {
+        const requesterId = req.user?.uid || req.user?.userId || null;
+        const requesterEmail = req.user?.email || null;
+
+        const requester = await getDb(
+            `SELECT id, role, status, hospital_id AS "hospitalId"
+             FROM users
+             WHERE (id = ? OR email = ?)
+             LIMIT 1`,
+            [requesterId, requesterEmail]
+        );
+
+        // User directory is a privileged administrative operation.
+        // Never authorize this endpoint from the JWT role alone.
+        const allowedDirectoryRoles = new Set(['admin', 'super_admin']);
+        if (
+            !requester ||
+            requester.status !== 'active' ||
+            !allowedDirectoryRoles.has(String(requester.role))
+        ) {
+            return res.status(403).json({
+                success: false,
+                code: 'ADMIN_REQUIRED',
+                message: 'Administrator privileges are required to list users.'
+            });
+        }
+
         const { role } = req.query;
-        let sql = `SELECT id, email, name, phone, role, status, created_at as "createdAt" FROM users WHERE 1=1`;
+        let sql = `SELECT id, email, name, phone, role, status,
+                          hospital_id AS "hospitalId",
+                          created_at AS "createdAt"
+                   FROM users
+                   WHERE 1=1`;
         const params = [];
 
         if (role) {
