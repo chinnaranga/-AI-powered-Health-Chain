@@ -1,5 +1,3 @@
-import { OAuth2Client } from 'google-auth-library';
-
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
 export async function verifyGoogleAccessToken(accessToken) {
@@ -11,36 +9,46 @@ export async function verifyGoogleAccessToken(accessToken) {
         throw new Error('Google access token is required.');
     }
 
-    const response = await fetch(
+    const tokenResponse = await fetch(
         `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
     );
 
-    if (!response.ok) {
+    if (!tokenResponse.ok) {
         throw new Error('Invalid or expired Google access token.');
     }
 
-    const tokenInfo = await response.json();
+    const tokenInfo = await tokenResponse.json();
+    const audience = tokenInfo.audience || tokenInfo.issued_to || tokenInfo.aud;
 
-    if (tokenInfo.aud !== GOOGLE_CLIENT_ID) {
+    if (audience !== GOOGLE_CLIENT_ID) {
         throw new Error('Google token audience validation failed.');
     }
 
-    if (tokenInfo.email_verified !== 'true') {
+    if (!Number.isFinite(Number(tokenInfo.expires_in)) || Number(tokenInfo.expires_in) <= 0) {
+        throw new Error('Google access token is expired.');
+    }
+
+    const userResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: {
+            Authorization: `Bearer ${accessToken}`
+        }
+    });
+
+    if (!userResponse.ok) {
+        throw new Error('Unable to retrieve Google user profile.');
+    }
+
+    const userInfo = await userResponse.json();
+
+    if (!userInfo.email || userInfo.verified_email !== true) {
         throw new Error('Google email is not verified.');
     }
 
-    const oauthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
-
-    const ticket = await oauthClient.verifyIdToken({
-        idToken: accessToken,
-        audience: GOOGLE_CLIENT_ID
-    }).catch(() => null);
-
     return {
-        email: tokenInfo.email?.trim().toLowerCase(),
-        name: tokenInfo.name || '',
-        picture: tokenInfo.picture || '',
-        sub: tokenInfo.sub,
+        email: userInfo.email.trim().toLowerCase(),
+        name: userInfo.name || '',
+        picture: userInfo.picture || '',
+        sub: userInfo.sub || tokenInfo.user_id,
         verified: true
     };
 }
