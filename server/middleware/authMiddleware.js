@@ -54,16 +54,25 @@ export const requireApprovedDoctor = async (req, res, next) => {
     }
 
     const userId = req.user.uid || req.user.userId;
-    const userEmail = req.user.email;
+
+    if (!userId) {
+        return res.status(401).json({
+            success: false,
+            code: 'AUTH_REQUIRED',
+            message: 'Authenticated user identity is missing.'
+        });
+    }
 
     try {
         const { getDb } = await import('../config/db.js');
+
         const user = await getDb(
-            `SELECT u.id, u.role, u.status, d.id as doctor_id 
-             FROM users u 
-             LEFT JOIN doctors d ON d.user_id = u.id 
-             WHERE (u.id = ? OR u.email = ?) LIMIT 1`,
-            [userId, userEmail]
+            `SELECT u.id, u.role, u.status, d.id as doctor_id, d.hospital_id
+             FROM users u
+             LEFT JOIN doctors d ON d.user_id = u.id
+             WHERE u.id = ?
+             LIMIT 1`,
+            [userId]
         );
 
         if (!user) {
@@ -92,14 +101,27 @@ export const requireApprovedDoctor = async (req, res, next) => {
             });
         }
 
+        if (!user.doctor_id || !user.hospital_id) {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_PROFILE_REQUIRED',
+                message: 'An approved doctor profile with a hospital assignment is required.'
+            });
+        }
+
         req.doctor = user;
         req.doctorId = user.doctor_id;
+        req.hospitalId = user.hospital_id;
+        req.tenantId = user.hospital_id;
+
         next();
     } catch (err) {
         console.error('[requireApprovedDoctor error]:', err.message);
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({
+            success: false,
+            message: err.message
+        });
     }
 };
-
 export const authenticateJwt = authMiddleware;
 export default authMiddleware;

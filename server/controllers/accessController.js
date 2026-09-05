@@ -115,7 +115,7 @@ export const verifyAccess = async (req, res) => {
         }
 
         const isPatientOwner = patient.user_id === requester.id;
-        const isPrivilegedRole = ['doctor', 'clinical', 'hospital_admin', 'admin', 'super_admin'].includes(requester.role);
+        const isPrivilegedRole = ['doctor', 'clinical', 'hospital_admin', 'admin'].includes(requester.role);
 
         if (!isPatientOwner && !isPrivilegedRole) {
             return res.status(403).json({
@@ -154,7 +154,7 @@ export const logAccess = async (req, res) => {
             });
         }
 
-        if (!['doctor', 'clinical', 'hospital_admin', 'admin', 'super_admin'].includes(requesterRole)) {
+        if (!['doctor', 'clinical', 'hospital_admin', 'admin'].includes(requesterRole)) {
             return res.status(403).json({
                 success: false,
                 code: 'ACCESS_LOGGING_DENIED',
@@ -217,7 +217,7 @@ export const getAccessLogs = async (req, res) => {
             });
         }
 
-        if (!['hospital_admin', 'admin', 'super_admin'].includes(requesterRole)) {
+        if (!['hospital_admin', 'admin'].includes(requesterRole)) {
             return res.status(403).json({
                 success: false,
                 code: 'AUDIT_LOG_ACCESS_DENIED',

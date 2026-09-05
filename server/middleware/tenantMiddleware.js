@@ -1,5 +1,5 @@
 export const tenantMiddleware = (req, res, next) => {
-    if (req.user && req.user.role !== 'super_admin') {
+    if (req.user && req.user.role !== 'admin') {
         req.tenantFilter = {
             $or: [
                 { hospitalId: req.user.hospitalId },

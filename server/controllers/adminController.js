@@ -21,7 +21,7 @@ async function verifyAdminUser(req) {
         admin = await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [adminEmail]);
     }
 
-    if (!admin || !['admin', 'super_admin'].includes(admin.role)) {
+    if (!admin || !['admin'].includes(admin.role)) {
         return null;
     }
 
@@ -58,7 +58,7 @@ export const getAdminOverview = async (req, res) => {
                     COUNT(*) FILTER (WHERE role = 'patient')::int AS "patients",
                     COUNT(*) FILTER (WHERE role = 'doctor')::int AS "doctors",
                     COUNT(*) FILTER (WHERE role = 'clinical')::int AS "clinicalStaff",
-                    COUNT(*) FILTER (WHERE role IN ('admin', 'super_admin'))::int AS "admins",
+                    COUNT(*) FILTER (WHERE role = 'admin')::int AS "admins",
                     COUNT(*) FILTER (WHERE status = 'active')::int AS "activeUsers",
                     COUNT(*) FILTER (WHERE status = 'pending')::int AS "pendingUsers"
                 FROM users

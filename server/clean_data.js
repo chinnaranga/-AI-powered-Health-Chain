@@ -80,7 +80,7 @@ async function cleanData() {
         console.log('\nRe-seeding essential system roles...');
         await client.query(`
             INSERT INTO roles (name, description) VALUES
-            ('super_admin', 'System Super Administrator'),
+            ('admin', 'System Administrator'),
             ('hospital_admin', 'Hospital Administrator'),
             ('doctor', 'Medical Doctor / Physician'),
             ('clinical', 'Clinical Staff & Nurse'),

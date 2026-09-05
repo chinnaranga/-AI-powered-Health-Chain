@@ -1,6 +1,7 @@
 import express from 'express';
 import db, { queryDb, getDb, runDb } from '../config/db.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
+import { enforceTenantIsolation } from '../middleware/tenantIsolation.js';
 import { writeAuditEvent } from '../services/auditLogger.js';
 
 const router = express.Router();
@@ -90,7 +91,7 @@ router.get('/hospitals', authMiddleware, async (req, res) => {
 });
 
 // 3. GET /api/hospitals/:id - Get Single Hospital
-router.get('/hospitals/:id', authMiddleware, async (req, res) => {
+router.get('/hospitals/:id', authMiddleware, enforceTenantIsolation, async (req, res) => {
     try {
         const hospital = await getDb(
             `SELECT id, name, code, city, state, country, status, created_at as "createdAt"
@@ -103,10 +104,10 @@ router.get('/hospitals/:id', authMiddleware, async (req, res) => {
         }
 
         const requesterRole = req.user?.role || req.role;
-        const requesterHospitalId = req.user?.hospitalId || req.user?.tenantId || req.hospitalId;
+        const requesterHospitalId = req.hospitalId;
 
         if (
-            !['admin', 'super_admin'].includes(requesterRole) &&
+            !['admin'].includes(requesterRole) &&
             requesterHospitalId !== hospital.id
         ) {
             return res.status(403).json({

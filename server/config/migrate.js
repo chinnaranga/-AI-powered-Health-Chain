@@ -89,29 +89,29 @@ async function repairSystemAdministrator() {
             return;
         }
 
-        if (user.role !== 'super_admin') {
+        if (user.role !== 'admin') {
             await query(
                 `UPDATE users
-                 SET role = 'super_admin',
+                 SET role = 'admin',
                      status = 'active',
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = $1`,
                 [user.id]
             );
-            console.log('[Neon Migrations] System administrator role repaired.');
+            console.log('[Neon Migrations] System administrator role repaired as admin.');
         }
 
         const roleResult = await query(
-            `SELECT id FROM roles WHERE name = 'super_admin' LIMIT 1`
+            `SELECT id FROM roles WHERE name = 'admin' LIMIT 1`
         );
 
-        const superAdminRoleId = roleResult.rows?.[0]?.id;
-        if (superAdminRoleId) {
+        const adminRoleId = roleResult.rows?.[0]?.id;
+        if (adminRoleId) {
             await query(
                 `INSERT INTO user_roles (user_id, role_id)
                  VALUES ($1, $2)
                  ON CONFLICT (user_id, role_id) DO NOTHING`,
-                [user.id, superAdminRoleId]
+                [user.id, adminRoleId]
             );
         }
     } catch (e) {

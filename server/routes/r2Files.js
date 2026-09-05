@@ -55,7 +55,7 @@ async function authorizeDocumentAccess(req, meta) {
         return { allowed: false, code: 'ROLE_MISMATCH' };
     }
 
-    if (role === 'super_admin') {
+    if (role === 'admin') {
         return { allowed: true };
     }
 
@@ -221,7 +221,7 @@ router.post('/r2/presigned-upload-url', authMiddleware, async (req, res) => {
         let targetPatient = null;
         let targetDoctor = null;
 
-        if (role === 'super_admin') {
+        if (role === 'admin') {
             targetTenant = hospitalId || null;
             targetPatient = patientId || null;
             targetDoctor = doctorId || null;
@@ -584,7 +584,7 @@ router.post('/r2/confirm-upload', authMiddleware, async (req, res) => {
         const userId = req.user?.uid || req.user?.userId;
         const role = req.role || req.user?.role || 'patient';
 
-        if (role !== 'super_admin' && String(docRow.uploaded_by || '') !== String(userId)) {
+        if (role !== 'admin' && String(docRow.uploaded_by || '') !== String(userId)) {
             return res.status(403).json({
                 success: false,
                 code: 'R2_UPLOAD_CONFIRM_DENIED',
@@ -853,7 +853,7 @@ router.get('/r2/files', authMiddleware, async (req, res) => {
         let sql = `SELECT * FROM documents WHERE upload_status != 'deleted'`;
         const params = [];
 
-        if (role === 'super_admin') {
+        if (role === 'admin') {
             // Global administrative visibility.
         } else if (role === 'patient') {
             const patient = await getDb(
@@ -982,7 +982,7 @@ router.delete('/r2/file/:fileId', authMiddleware, async (req, res) => {
             const userId = req.user?.uid || req.user?.userId;
 
             const canDelete =
-                role === 'super_admin' ||
+                role === 'admin' ||
                 String(meta.uploaded_by || '') === String(userId);
 
             if (!canDelete) {
@@ -1090,7 +1090,7 @@ router.get('/r2/audit-logs', authMiddleware, async (req, res) => {
             });
         }
 
-        if (!['super_admin', 'hospital_admin', 'admin'].includes(role)) {
+        if (!['admin', 'hospital_admin'].includes(role)) {
             return res.status(403).json({
                 success: false,
                 code: 'R2_AUDIT_ACCESS_DENIED',
@@ -1105,7 +1105,7 @@ router.get('/r2/audit-logs', authMiddleware, async (req, res) => {
         `;
         const params = [];
 
-        if (role !== 'super_admin') {
+        if (role !== 'admin') {
             if (!user.hospital_id) {
                 return res.status(403).json({
                     success: false,
@@ -1183,7 +1183,7 @@ router.get('/r2/storage-quota', authMiddleware, async (req, res) => {
 
         const requestedHospital = req.query.hospitalId || null;
 
-        if (role === 'super_admin') {
+        if (role === 'admin') {
             if (!requestedHospital) {
                 return res.status(400).json({
                     success: false,

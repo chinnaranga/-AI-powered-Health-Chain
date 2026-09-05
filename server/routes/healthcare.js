@@ -62,9 +62,10 @@ router.get('/appointments', authMiddleware, async (req, res) => {
             );
         } else if (requester.role === 'doctor') {
             const doctor = await getDb(
-                `SELECT id, hospital_id
-                 FROM doctors
-                 WHERE user_id = ?
+                `SELECT d.id, d.hospital_id, u.status
+                 FROM doctors d
+                 JOIN users u ON u.id = d.user_id
+                 WHERE d.user_id = ?
                  LIMIT 1`,
                 [requester.id]
             );
@@ -74,6 +75,14 @@ router.get('/appointments', authMiddleware, async (req, res) => {
                     success: false,
                     code: 'DOCTOR_PROFILE_REQUIRED',
                     message: 'Registered doctor profile required.'
+                });
+            }
+
+            if (doctor.status !== 'active') {
+                return res.status(403).json({
+                    success: false,
+                    code: 'DOCTOR_APPROVAL_REQUIRED',
+                    message: 'Doctor approval is required before accessing appointments.'
                 });
             }
 
@@ -87,8 +96,8 @@ router.get('/appointments', authMiddleware, async (req, res) => {
                  LIMIT 100`,
                 [doctor.id, doctor.hospital_id, status || null, status || null]
             );
-        } else if (['clinical', 'hospital_admin', 'admin', 'super_admin'].includes(requester.role)) {
-            if (requester.role === 'super_admin') {
+        } else if (['clinical', 'hospital_admin', 'admin'].includes(requester.role)) {
+            if (requester.role === 'admin') {
                 rows = await queryDb(
                     `SELECT *
                      FROM appointments
@@ -448,7 +457,7 @@ router.post('/consents', authMiddleware, async (req, res) => {
             recipient.hospitalId &&
             patient.hospitalId &&
             String(recipient.hospitalId) !== String(patient.hospitalId) &&
-            !['admin', 'super_admin'].includes(recipient.role)
+            !['admin'].includes(recipient.role)
         ) {
             return res.status(403).json({
                 success: false,
@@ -671,9 +680,10 @@ router.get('/prescriptions', authMiddleware, async (req, res) => {
         }
 
         const doctor = await getDb(
-            `SELECT id, hospital_id
-             FROM doctors
-             WHERE user_id = ?
+            `SELECT d.id, d.hospital_id, u.status
+             FROM doctors d
+             JOIN users u ON u.id = d.user_id
+             WHERE d.user_id = ?
              LIMIT 1`,
             [requester.id]
         );
@@ -683,6 +693,14 @@ router.get('/prescriptions', authMiddleware, async (req, res) => {
                 success: false,
                 code: 'DOCTOR_PROFILE_REQUIRED',
                 message: 'Registered clinical provider profile required.'
+            });
+        }
+
+        if (requester.role === 'doctor' && doctor.status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_APPROVAL_REQUIRED',
+                message: 'Doctor approval is required before accessing patient medical records.'
             });
         }
 
@@ -811,9 +829,10 @@ router.get('/lab-results', authMiddleware, async (req, res) => {
         }
 
         const doctor = await getDb(
-            `SELECT id, hospital_id
-             FROM doctors
-             WHERE user_id = ?
+            `SELECT d.id, d.hospital_id, u.status
+             FROM doctors d
+             JOIN users u ON u.id = d.user_id
+             WHERE d.user_id = ?
              LIMIT 1`,
             [requester.id]
         );
@@ -823,6 +842,14 @@ router.get('/lab-results', authMiddleware, async (req, res) => {
                 success: false,
                 code: 'DOCTOR_PROFILE_REQUIRED',
                 message: 'Registered clinical provider profile required.'
+            });
+        }
+
+        if (requester.role === 'doctor' && doctor.status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_APPROVAL_REQUIRED',
+                message: 'Doctor approval is required before accessing patient medical records.'
             });
         }
 
@@ -899,19 +926,26 @@ router.get('/lab-results', authMiddleware, async (req, res) => {
 router.get('/users', authMiddleware, async (req, res) => {
     try {
         const requesterId = req.user?.uid || req.user?.userId || null;
-        const requesterEmail = req.user?.email || null;
+
+        if (!requesterId) {
+            return res.status(401).json({
+                success: false,
+                code: 'AUTH_REQUIRED',
+                message: 'Authenticated user identity is required.'
+            });
+        }
 
         const requester = await getDb(
             `SELECT id, role, status, hospital_id AS "hospitalId"
              FROM users
-             WHERE (id = ? OR email = ?)
+             WHERE id = ?
              LIMIT 1`,
-            [requesterId, requesterEmail]
+            [requesterId]
         );
 
         // User directory is a privileged administrative operation.
         // Never authorize this endpoint from the JWT role alone.
-        const allowedDirectoryRoles = new Set(['admin', 'super_admin']);
+        const allowedDirectoryRoles = new Set(['admin']);
         if (
             !requester ||
             requester.status !== 'active' ||
@@ -937,7 +971,7 @@ router.get('/users', authMiddleware, async (req, res) => {
             params.push(role);
         }
 
-        if (requester.role !== 'super_admin') {
+        if (requester.role !== 'admin') {
             sql += ` AND hospital_id = ?`;
             params.push(requester.hospitalId);
         }
@@ -961,15 +995,22 @@ router.get('/users', authMiddleware, async (req, res) => {
 router.put('/users/:id', authMiddleware, async (req, res) => {
     try {
         const requesterId = req.user?.uid || req.user?.userId || null;
-        const requesterEmail = req.user?.email || null;
         const targetId = req.params.id;
+
+        if (!requesterId) {
+            return res.status(401).json({
+                success: false,
+                code: 'AUTH_REQUIRED',
+                message: 'Authenticated user identity is required.'
+            });
+        }
 
         const requester = await getDb(
             `SELECT id, role, status, hospital_id AS "hospitalId"
              FROM users
-             WHERE (id = ? OR email = ?)
+             WHERE id = ?
              LIMIT 1`,
-            [requesterId, requesterEmail]
+            [requesterId]
         );
 
         if (!requester || requester.status !== 'active') {
@@ -995,7 +1036,7 @@ router.put('/users/:id', authMiddleware, async (req, res) => {
             });
         }
 
-        const isAdmin = ['admin', 'super_admin'].includes(requester.role);
+        const isAdmin = ['admin'].includes(requester.role);
         const isSelf = String(requester.id) === String(target.id);
 
         if (!isAdmin && !isSelf) {
@@ -1008,7 +1049,7 @@ router.put('/users/:id', authMiddleware, async (req, res) => {
 
         if (
             isAdmin &&
-            requester.role !== 'super_admin' &&
+            requester.role !== 'admin' &&
             requester.hospitalId &&
             target.hospitalId !== requester.hospitalId
         ) {

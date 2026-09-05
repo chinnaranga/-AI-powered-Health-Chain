@@ -1,6 +1,7 @@
 import express from 'express';
 import db, { queryDb } from '../config/db.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
+import { enforceTenantIsolation } from '../middleware/tenantIsolation.js';
 import { writeAuditEvent } from '../services/auditLogger.js';
 
 const router = express.Router();
@@ -9,11 +10,11 @@ const router = express.Router();
  * POST /api/ai/chat - Gemma 4 Neon PostgreSQL RAG Engine Endpoint
  * Strictly verifies role permissions and tenant boundaries before fetching records.
  */
-router.post('/ai/chat', authMiddleware, async (req, res) => {
+router.post('/ai/chat', authMiddleware, enforceTenantIsolation, async (req, res) => {
     try {
-        const { message, role } = req.body;
-        const userRole = req.user.role || role || 'patient';
-        const userHospitalId = req.hospitalId || req.user.hospitalId;
+        const { message } = req.body || {};
+        const userRole = req.role;
+        const userHospitalId = req.hospitalId;
 
         let sources = [];
         let contextBlocks = [];
@@ -82,7 +83,7 @@ router.post('/ai/chat', authMiddleware, async (req, res) => {
             role: userRole,
             action: 'AI_CHAT_QUERY',
             status: 'SUCCESS',
-            hospitalId: userHospitalId || 'default_hospital',
+            hospitalId: userHospitalId,
             details: { queryLength: (message || '').length }
         });
 

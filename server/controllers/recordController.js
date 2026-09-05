@@ -137,7 +137,7 @@ export const addRecord = async (req, res) => {
             effectivePatientId = targetPatient.id;
             effectiveDoctorId = doctor.id;
             effectiveHospitalId = doctor.hospital_id || targetPatient.hospital_id || null;
-        } else if (['clinical', 'hospital_admin', 'admin', 'super_admin'].includes(requester.role)) {
+        } else if (['clinical', 'hospital_admin', 'admin'].includes(requester.role)) {
             return res.status(403).json({
                 success: false,
                 code: 'RECORD_CREATION_NOT_PERMITTED',
@@ -446,7 +446,7 @@ export const deleteRecord = async (req, res) => {
         const isAdmin =
             requesterRole === 'hospital_admin' ||
             requesterRole === 'admin' ||
-            requesterRole === 'super_admin';
+            requesterRole === 'admin';
 
         if (!isOwner && !isCreator && !isDoctorOwner && !isAdmin) {
             return res.status(403).json({

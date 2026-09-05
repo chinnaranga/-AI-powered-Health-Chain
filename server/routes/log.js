@@ -1,12 +1,13 @@
 import express from 'express';
 import db, { queryDb } from '../config/db.js';
 import { authMiddleware } from '../middleware/authMiddleware.js';
+import { enforceTenantIsolation } from '../middleware/tenantIsolation.js';
 import { writeAuditEvent } from '../services/auditLogger.js';
 
 const router = express.Router();
 
 // 1. POST /api/log - Write compliance audit log entry to Neon PostgreSQL
-router.post('/log', authMiddleware, async (req, res) => {
+router.post('/log', authMiddleware, enforceTenantIsolation, async (req, res) => {
     try {
         const { action, targetId, details, accessType } = req.body;
         const tenantId = req.hospitalId || 'default_hospital';
@@ -33,7 +34,7 @@ router.post('/log', authMiddleware, async (req, res) => {
 });
 
 // 2. GET /api/log/history - Fetch audit log history from Neon PostgreSQL
-router.get('/log/history', authMiddleware, async (req, res) => {
+router.get('/log/history', authMiddleware, enforceTenantIsolation, async (req, res) => {
     try {
         const tenantId = req.hospitalId;
         let querySql = `SELECT id, actor_user_id as "userId", action, resource_type as "resourceType", 
@@ -42,7 +43,7 @@ router.get('/log/history', authMiddleware, async (req, res) => {
                         FROM audit_logs WHERE 1=1`;
         const params = [];
 
-        if (req.role !== 'super_admin' && req.role !== 'admin' && tenantId && tenantId !== 'default_hospital') {
+        if (req.role !== 'admin' && tenantId && tenantId !== 'default_hospital') {
             querySql += ` AND (hospital_id = ? OR hospital_id IS NULL)`;
             params.push(tenantId);
         }
