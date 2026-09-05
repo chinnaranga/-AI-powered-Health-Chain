@@ -1,0 +1,500 @@
+import express from 'express';
+import crypto from 'crypto';
+import db, { queryDb, getDb, runDb } from '../config/db.js';
+import { authMiddleware } from '../middleware/authMiddleware.js';
+import { createPresignedUploadUrl, createPresignedDownloadUrl, deleteR2Object } from '../services/r2Service.js';
+import { checkStorageQuota, recordStorageUsage, getMonthlyStorageUsage } from '../services/quotaService.js';
+import { writeAuditEvent } from '../services/auditLogger.js';
+
+const router = express.Router();
+
+// Supported Healthcare File Categories
+const ALLOWED_CATEGORIES = [
+    'lab_report',
+    'mri',
+    'ct_scan',
+    'xray',
+    'prescription',
+    'insurance',
+    'certificate',
+    'profile_image',
+    'medical_pdf',
+    'other_attachment'
+];
+
+// Max file size limit: 100MB
+const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+
+/**
+ * Helper to check RBAC permissions on a file metadata record
+ */
+function checkFilePermission(user, role, userHospitalId, fileMeta) {
+    if (role === 'hospital_admin' || role === 'admin' || role === 'super_admin') {
+        return fileMeta.hospitalId === userHospitalId || userHospitalId === 'all' || !fileMeta.hospitalId;
+    }
+
+    if (role === 'patient') {
+        return fileMeta.patientId === user.uid || fileMeta.uploadedFor === user.uid || fileMeta.uploadedBy === user.uid;
+    }
+
+    if (role === 'doctor') {
+        const isSameTenant = fileMeta.hospitalId === userHospitalId || userHospitalId === 'default_hospital';
+        const isConsentApproved = fileMeta.consentStatus === 'approved';
+        const isAssignedDoctor = fileMeta.doctorId === user.uid || fileMeta.uploadedBy === user.uid;
+        return (isSameTenant && isConsentApproved) || isAssignedDoctor;
+    }
+
+    if (role === 'clinical_staff' || role === 'clinical' || role === 'laboratory') {
+        return true;
+    }
+
+    return fileMeta.uploadedBy === user.uid || fileMeta.patientId === user.uid;
+}
+
+/**
+ * 1. POST /api/r2/presigned-upload-url
+ */
+router.post('/r2/presigned-upload-url', authMiddleware, async (req, res) => {
+    try {
+        const {
+            fileName,
+            fileType = 'medical_pdf',
+            fileSize,
+            contentType = 'application/pdf',
+            patientId,
+            doctorId,
+            hospitalId,
+            departmentId = 'radiology',
+            visibilityScope = 'hospital_internal',
+            consentStatus = 'approved'
+        } = req.body;
+
+        if (!fileName) {
+            return res.status(400).json({ success: false, message: 'fileName is required.' });
+        }
+
+        const bytesToUpload = Number(fileSize) || 0;
+        if (bytesToUpload > MAX_FILE_SIZE_BYTES) {
+            return res.status(400).json({ success: false, message: 'File size exceeds maximum permitted limit of 100MB.' });
+        }
+
+        const category = ALLOWED_CATEGORIES.includes(fileType) ? fileType : 'medical_pdf';
+        const targetTenant = hospitalId || req.hospitalId || 'default_hospital';
+        const targetPatient = patientId || (req.role === 'patient' ? req.user.uid : 'pat_gen_' + req.user.uid.slice(0, 6));
+        const targetDoctor = doctorId || (req.role === 'doctor' ? req.user.uid : null);
+
+        // SERVER-SIDE QUOTA CHECK
+        const quotaCheck = await checkStorageQuota({
+            hospitalId: targetTenant,
+            requestedBytes: bytesToUpload,
+            operationType: 'upload'
+        });
+
+        if (!quotaCheck.isAllowed) {
+            await writeAuditEvent({
+                userId: req.user.uid,
+                role: req.role || 'patient',
+                action: 'FILE_UPLOAD_BLOCKED_QUOTA',
+                resourceType: 'file',
+                resourceId: fileName,
+                details: { reason: quotaCheck.reason, warningLevel: quotaCheck.warningLevel },
+                status: 'BLOCKED'
+            });
+
+            return res.status(429).json({
+                success: false,
+                isQuotaExceeded: true,
+                warningLevel: quotaCheck.warningLevel,
+                message: 'Monthly storage limit reached. Please upgrade your storage plan.',
+                reason: quotaCheck.reason,
+                resetAt: quotaCheck.resetAt
+            });
+        }
+
+        // Generate unique R2 file ID and Object Key
+        const fileId = `r2_doc_${crypto.randomBytes(8).toString('hex')}`;
+        const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        const objectKey = `hospitals/${targetTenant}/patients/${targetPatient}/${category}/${new Date().getFullYear()}/${fileId}_${sanitizedFileName}`;
+
+        // Generate S3-compatible Presigned Upload URL for Cloudflare R2
+        const presignedData = await createPresignedUploadUrl({
+            objectKey,
+            contentType,
+            expiresInSeconds: 900 // 15 minutes
+        });
+
+        // Audit Log
+        const auditLog = await writeAuditEvent({
+            userId: req.user.uid,
+            role: req.role || 'patient',
+            action: 'FILE_UPLOAD_INITIATED',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            details: { objectKey, fileName: sanitizedFileName, fileSize: bytesToUpload, contentType },
+            status: 'PENDING'
+        });
+
+        // Store Document Metadata in Neon PostgreSQL
+        const fileMetadata = {
+            fileId,
+            fileName: sanitizedFileName,
+            fileType: category,
+            fileSize: bytesToUpload,
+            contentType,
+            storageProvider: 'cloudflare-r2',
+            bucketName: presignedData.bucketName,
+            objectKey,
+            uploadedBy: req.user.uid,
+            uploadedFor: targetPatient,
+            patientId: targetPatient,
+            doctorId: targetDoctor,
+            hospitalId: targetTenant,
+            departmentId,
+            visibilityScope,
+            consentStatus,
+            uploadStatus: 'pending',
+            auditId: auditLog.auditId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+
+        try {
+            await runDb(
+                `INSERT INTO documents (
+                    id, file_id, file_name, document_type, mime_type, file_size, 
+                    storage_provider, storage_key, bucket_name, uploaded_by, 
+                    visibility_scope, consent_status, upload_status, audit_id, created_at, updated_at
+                ) VALUES (
+                    gen_random_uuid(), ?, ?, ?, ?, ?, 
+                    'cloudflare-r2', ?, ?, ?, 
+                    ?, ?, 'pending', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )`,
+                [
+                    fileId,
+                    sanitizedFileName,
+                    category,
+                    contentType,
+                    bytesToUpload,
+                    objectKey,
+                    presignedData.bucketName,
+                    req.user.uid,
+                    visibilityScope,
+                    consentStatus,
+                    auditLog.auditId
+                ]
+            );
+        } catch (dbErr) {
+            console.warn('[Documents Insert Notice]:', dbErr.message);
+        }
+
+        res.status(201).json({
+            success: true,
+            fileId,
+            uploadUrl: presignedData.uploadUrl,
+            expiresIn: presignedData.expiresIn,
+            warningLevel: quotaCheck.warningLevel,
+            metadata: fileMetadata
+        });
+    } catch (err) {
+        console.error('[R2 Upload Presign Error]', err);
+        res.status(500).json({ success: false, message: 'Failed to generate presigned upload URL: ' + err.message });
+    }
+});
+
+/**
+ * 2. POST /api/r2/confirm-upload
+ */
+router.post('/r2/confirm-upload', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.body;
+        if (!fileId) {
+            return res.status(400).json({ success: false, message: 'fileId is required.' });
+        }
+
+        let docRow = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        const auditLog = await writeAuditEvent({
+            userId: req.user.uid,
+            action: 'FILE_UPLOAD_CONFIRMED',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            status: 'SUCCESS'
+        });
+
+        // Record Quota Usage in PostgreSQL
+        const fileSize = docRow ? Number(docRow.file_size) : 0;
+        const updatedQuota = await recordStorageUsage({
+            hospitalId: req.hospitalId || 'default_hospital',
+            departmentId: 'general',
+            userId: req.user.uid,
+            bytesDelta: fileSize,
+            operationType: 'upload',
+            fileType: docRow?.document_type || 'medical_pdf'
+        });
+
+        try {
+            await runDb(
+                `UPDATE documents SET upload_status = 'active', updated_at = CURRENT_TIMESTAMP, audit_id = ? WHERE file_id = ?`,
+                [auditLog.auditId, fileId]
+            );
+        } catch (e) {}
+
+        res.json({
+            success: true,
+            message: 'File upload confirmed and metadata saved in Neon PostgreSQL.',
+            metadata: {
+                fileId,
+                uploadStatus: 'active',
+                updatedAt: new Date().toISOString()
+            },
+            quota: updatedQuota
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 3. POST /api/r2/presigned-download-url
+ */
+router.post('/r2/presigned-download-url', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.body;
+        if (!fileId) {
+            return res.status(400).json({ success: false, message: 'fileId is required.' });
+        }
+
+        const meta = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        if (!meta) {
+            // Check in medical_records if not in documents
+            const rec = await getDb(`SELECT * FROM medical_records WHERE r2_file_id = ? OR id = ? LIMIT 1`, [fileId, fileId]);
+            if (!rec) {
+                return res.status(404).json({ success: false, message: 'File record not found.' });
+            }
+
+            const downloadUrl = rec.download_url || 'https://ipfs.io/ipfs/QmSgvgwxZGaFAcxya2Sc37EDbfgPZ2m1SDBMNoB6cEMC3t';
+            return res.json({
+                success: true,
+                downloadUrl,
+                fileName: rec.file_name || 'document.pdf',
+                contentType: 'application/pdf'
+            });
+        }
+
+        const objectKey = meta.storage_key;
+        const presignedData = await createPresignedDownloadUrl({
+            objectKey,
+            expiresInSeconds: 900
+        });
+
+        await writeAuditEvent({
+            userId: req.user.uid,
+            action: 'FILE_DOWNLOAD',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            status: 'SUCCESS'
+        });
+
+        res.json({
+            success: true,
+            downloadUrl: presignedData.downloadUrl,
+            expiresIn: presignedData.expiresIn,
+            fileName: meta.file_name,
+            contentType: meta.mime_type,
+            metadata: meta
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 4. POST /api/r2/presigned-preview-url
+ */
+router.post('/r2/presigned-preview-url', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.body;
+        if (!fileId) {
+            return res.status(400).json({ success: false, message: 'fileId is required.' });
+        }
+
+        const meta = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        if (!meta) {
+            const rec = await getDb(`SELECT * FROM medical_records WHERE r2_file_id = ? OR id = ? LIMIT 1`, [fileId, fileId]);
+            const downloadUrl = rec?.download_url || 'https://ipfs.io/ipfs/QmSgvgwxZGaFAcxya2Sc37EDbfgPZ2m1SDBMNoB6cEMC3t';
+            return res.json({
+                success: true,
+                previewUrl: downloadUrl,
+                fileName: rec?.file_name || 'document.pdf',
+                contentType: 'application/pdf'
+            });
+        }
+
+        const presignedData = await createPresignedDownloadUrl({
+            objectKey: meta.storage_key,
+            expiresInSeconds: 600
+        });
+
+        res.json({
+            success: true,
+            previewUrl: presignedData.downloadUrl,
+            expiresIn: presignedData.expiresIn,
+            fileName: meta.file_name,
+            contentType: meta.mime_type,
+            metadata: meta
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 5. GET /api/r2/files
+ */
+router.get('/r2/files', authMiddleware, async (req, res) => {
+    try {
+        const { category } = req.query;
+        let sql = `SELECT * FROM documents WHERE upload_status != 'deleted'`;
+        const params = [];
+
+        if (category && category !== 'all') {
+            sql += ` AND document_type = ?`;
+            params.push(category);
+        }
+
+        sql += ` ORDER BY created_at DESC LIMIT 100`;
+
+        const rows = await queryDb(sql, params);
+
+        const files = rows.map(r => ({
+            fileId: r.file_id,
+            fileName: r.file_name,
+            fileType: r.document_type,
+            fileSize: Number(r.file_size),
+            contentType: r.mime_type,
+            uploadStatus: r.upload_status,
+            createdAt: r.created_at
+        }));
+
+        res.json({
+            success: true,
+            totalFiles: files.length,
+            files
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, files: [] });
+    }
+});
+
+/**
+ * 6. DELETE /api/r2/file/:fileId
+ */
+router.delete('/r2/file/:fileId', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.params;
+        const meta = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        if (meta) {
+            try {
+                await deleteR2Object({ objectKey: meta.storage_key });
+            } catch (e) {}
+
+            await runDb(`UPDATE documents SET upload_status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE file_id = ?`, [fileId]);
+
+            await recordStorageUsage({
+                hospitalId: req.hospitalId || 'default_hospital',
+                bytesDelta: -Number(meta.file_size || 0),
+                operationType: 'delete'
+            });
+        }
+
+        await writeAuditEvent({
+            userId: req.user.uid,
+            action: 'FILE_DELETE',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            status: 'SUCCESS'
+        });
+
+        res.json({
+            success: true,
+            message: 'File record marked as deleted in Neon PostgreSQL.',
+            fileId
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 7. GET /api/r2/audit-logs
+ */
+router.get('/r2/audit-logs', authMiddleware, async (req, res) => {
+    try {
+        const rows = await queryDb(
+            `SELECT id, actor_user_id as "requestedBy", action, resource_type as "fileType", 
+                    resource_id as "fileId", status, timestamp, details 
+             FROM audit_logs 
+             ORDER BY timestamp DESC LIMIT 50`
+        );
+
+        const auditLogs = rows.map(r => ({
+            id: r.id,
+            auditId: r.id,
+            action: r.action,
+            fileId: r.fileId,
+            requestedBy: r.requestedBy,
+            status: r.status,
+            timestamp: r.timestamp,
+            details: typeof r.details === 'string' ? JSON.parse(r.details) : r.details
+        }));
+
+        res.json({
+            success: true,
+            totalLogs: auditLogs.length,
+            auditLogs
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, auditLogs: [] });
+    }
+});
+
+/**
+ * 8. GET /api/r2/storage-quota
+ */
+router.get('/r2/storage-quota', authMiddleware, async (req, res) => {
+    try {
+        const targetHospital = req.query.hospitalId || req.hospitalId || 'default_hospital';
+        const quotaInfo = await checkStorageQuota({ hospitalId: targetHospital });
+        const usage = quotaInfo.usage;
+
+        res.json({
+            success: true,
+            hospitalId: targetHospital,
+            month: usage.month,
+            totalStorageBytes: usage.totalStorageBytes || 0,
+            maxStorageBytes: usage.maxStorageBytes || 10737418240,
+            storagePercentage: Number(((usage.totalStorageBytes / usage.maxStorageBytes) * 100).toFixed(2)),
+            uploadCount: usage.uploadCount || 0,
+            downloadCount: usage.downloadCount || 0,
+            previewCount: usage.previewCount || 0,
+            deleteCount: usage.deleteCount || 0,
+            classARequests: usage.classARequests || 0,
+            maxClassARequests: usage.maxClassARequests || 1000000,
+            classAPercentage: Number(((usage.classARequests / usage.maxClassARequests) * 100).toFixed(2)),
+            classBRequests: usage.classBRequests || 0,
+            maxClassBRequests: usage.maxClassBRequests || 10000000,
+            classBPercentage: Number(((usage.classBRequests / usage.maxClassBRequests) * 100).toFixed(2)),
+            warningLevel: usage.warningLevel || 'normal',
+            isBlocked: usage.isBlocked || false,
+            resetAt: usage.resetAt,
+            categoryBreakdown: usage.categoryBreakdown || {}
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+export default router;

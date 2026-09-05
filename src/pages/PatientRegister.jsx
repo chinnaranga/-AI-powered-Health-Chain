@@ -1,13 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Lock, Eye, EyeOff, Shield, ArrowRight, ArrowLeft,
-    Loader2, CheckCircle, Phone, MessageSquare
+    Loader2, CheckCircle
 } from 'lucide-react';
 import {
-    RecaptchaVerifier,
-    signInWithPhoneNumber,
     GoogleAuthProvider,
     signInWithPopup
 } from 'firebase/auth';
@@ -25,128 +23,19 @@ export default function PatientRegister() {
         role: 'patient',
         password: '',
         confirmPassword: '',
-        phone: ''
     });
     const [showPassword, setShowPassword] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
 
     const stepsList = [
         { id: 1, label: 'Identity' },
-        { id: 2, label: 'Password' },
-        { id: 3, label: 'Verify' }
+        { id: 2, label: 'Password' }
     ];
-
-    // Phone OTP state
-    const [otpSent, setOtpSent] = useState(false);
-    const [otp, setOtp] = useState(['', '', '', '', '', '']);
-    const [isSendingOtp, setIsSendingOtp] = useState(false);
-    const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
-    const [phoneVerified, setPhoneVerified] = useState(false);
-    const [confirmationResult, setConfirmationResult] = useState(null);
-    const [otpTimer, setOtpTimer] = useState(0);
-    const otpRefs = useRef([]);
-    const recaptchaRef = useRef(null);
 
     const { register, isLoading, error, clearError } = useAuthStore();
     const navigate = useNavigate();
 
     const update = (field, value) => setForm(f => ({ ...f, [field]: value }));
-
-    // Countdown timer for OTP resend
-    useEffect(() => {
-        if (otpTimer > 0) {
-            const t = setTimeout(() => setOtpTimer(t => t - 1), 1000);
-            return () => clearTimeout(t);
-        }
-    }, [otpTimer]);
-
-    // Setup invisible reCAPTCHA
-    const setupRecaptcha = () => {
-        if (recaptchaRef.current) {
-            try { recaptchaRef.current.clear(); } catch (_) {}
-            recaptchaRef.current = null;
-        }
-        recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
-            size: 'invisible',
-            callback: () => {},
-        });
-        return recaptchaRef.current;
-    };
-
-    const handleSendOtp = async () => {
-        let phone = form.phone.trim().replace(/[\s\-()]/g, '');
-        if (phone && !phone.startsWith('+')) {
-            if (phone.length === 10) {
-                phone = '+91' + phone;
-            } else {
-                phone = '+' + phone;
-            }
-        }
-        if (!phone || phone.length < 10) {
-            toast.error('Enter a valid phone number with country code (e.g. +91xxxxxxxxxx)');
-            return;
-        }
-        update('phone', phone);
-        try {
-            setIsSendingOtp(true);
-            const verifier = setupRecaptcha();
-            const result = await signInWithPhoneNumber(auth, phone, verifier);
-            setConfirmationResult(result);
-            setOtpSent(true);
-            setOtpTimer(60);
-            toast.success(`OTP sent to ${phone}`);
-        } catch (err) {
-            console.error(err);
-            if (recaptchaRef.current) {
-                try { recaptchaRef.current.clear(); } catch (_) {}
-                recaptchaRef.current = null;
-            }
-            if (err.code === 'auth/invalid-phone-number') {
-                toast.error('Invalid format. Use: +91xxxxxxxxxx (no spaces)');
-            } else {
-                toast.error('Failed to send OTP. Try again.');
-            }
-        } finally {
-            setIsSendingOtp(false);
-        }
-    };
-
-    const handleOtpChange = (index, value) => {
-        if (!/^\d?$/.test(value)) return;
-        const next = [...otp];
-        next[index] = value;
-        setOtp(next);
-        if (value && index < 5) otpRefs.current[index + 1]?.focus();
-        if (!value && index > 0) otpRefs.current[index - 1]?.focus();
-    };
-
-    const handleOtpKeyDown = (index, e) => {
-        if (e.key === 'Backspace' && !otp[index] && index > 0) {
-            otpRefs.current[index - 1]?.focus();
-        }
-    };
-
-    const handleVerifyOtp = async () => {
-        const code = otp.join('');
-        if (code.length !== 6) {
-            toast.error('Enter the full 6-digit OTP');
-            return;
-        }
-        try {
-            setIsVerifyingOtp(true);
-            await confirmationResult.confirm(code);
-            setPhoneVerified(true);
-            toast.success('Phone verified! Creating your account...');
-            await handleSubmit();
-        } catch (err) {
-            console.error(err);
-            toast.error('Invalid OTP. Please try again.');
-            setOtp(['', '', '', '', '', '']);
-            otpRefs.current[0]?.focus();
-        } finally {
-            setIsVerifyingOtp(false);
-        }
-    };
 
     const handleSubmit = async () => {
         clearError();
@@ -156,7 +45,6 @@ export default function PatientRegister() {
                 email: form.email,
                 password: form.password,
                 role: 'patient',
-                phone: form.phone,
             };
             await register(payload);
             sessionStorage.setItem('hc_is_new_user', 'true');
@@ -223,22 +111,21 @@ export default function PatientRegister() {
         setStep(2);
     };
 
-    const goToVerifyStep = () => {
+    const handleCreateAccount = async () => {
         if (form.password !== form.confirmPassword) {
             toast.error('Passwords do not match');
             return;
         }
-        if (form.password.length < 6) {
-            toast.error('Password must be at least 6 characters');
+        if (form.password.length < 8) {
+            toast.error('Password must be at least 8 characters');
             return;
         }
-        setStep(3);
+        await handleSubmit();
     };
 
     return (
         <div className="relative min-h-screen flex items-center justify-center px-6 pt-20 pb-12 bg-navy-950">
             <ParticleBackground />
-            <div id="recaptcha-container" />
 
             <motion.div
                 initial={{ opacity: 0, y: 30, scale: 0.97 }}
@@ -352,7 +239,7 @@ export default function PatientRegister() {
                                     onClick={goToPasswordStep}
                                     className="w-full py-3.5 rounded-xl bg-sage-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-sage-700 transition-all shadow-soft hover:shadow-md"
                                 >
-                                    Continue <ArrowRight className="w-4 h-4" />
+                                    Create Account <ArrowRight className="w-4 h-4" />
                                 </motion.button>
                             </motion.div>
                         )}
@@ -427,7 +314,7 @@ export default function PatientRegister() {
                                         whileHover={{ scale: 1.01 }}
                                         whileTap={{ scale: 0.99 }}
                                         type="button"
-                                        onClick={goToVerifyStep}
+                                        onClick={handleCreateAccount}
                                         className="flex-1 py-3.5 rounded-xl bg-sage-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-sage-700 transition-all shadow-soft hover:shadow-md"
                                     >
                                         Continue <ArrowRight className="w-4 h-4" />
@@ -436,105 +323,6 @@ export default function PatientRegister() {
                             </motion.div>
                         )}
 
-                        {/* Step 3: Phone Verification */}
-                        {step === 3 && (
-                            <motion.div
-                                key="step3"
-                                initial={{ opacity: 0, x: -20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                exit={{ opacity: 0, x: 20 }}
-                                className="space-y-5"
-                            >
-                                <div className="rounded-xl bg-sage-100/50 border border-sage-600/20 p-4 text-xs text-navy-400 leading-relaxed flex gap-3">
-                                    <Shield className="w-4 h-4 text-sage-600 shrink-0 mt-0.5" />
-                                    <span>To cryptographically bind your profile, enter your phone number with country code (e.g. <strong>+1xxxxxxxxxx</strong> or <strong>+91xxxxxxxxxx</strong>).</span>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs text-navy-400 font-bold uppercase tracking-wider mb-2">Phone Number</label>
-                                    <div className="flex gap-2">
-                                        <div className="relative flex-1">
-                                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-navy-400" />
-                                            <input
-                                                type="tel"
-                                                value={form.phone}
-                                                onChange={e => update('phone', e.target.value)}
-                                                placeholder="+1 555-0199"
-                                                disabled={otpSent && !phoneVerified}
-                                                className="w-full bg-white border border-navy-800 rounded-xl pl-10 pr-4 py-3 text-sm text-navy-50 placeholder-navy-600 focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500/20 transition-all disabled:opacity-60"
-                                            />
-                                        </div>
-                                        <motion.button
-                                            whileTap={{ scale: 0.97 }}
-                                            type="button"
-                                            onClick={handleSendOtp}
-                                            disabled={isSendingOtp || (otpTimer > 0 && otpSent)}
-                                            className="shrink-0 px-4 py-3 rounded-xl bg-sage-600 hover:bg-sage-700 text-white text-xs font-bold disabled:opacity-50 transition-all flex items-center gap-2"
-                                        >
-                                            {isSendingOtp ? (
-                                                <Loader2 className="w-4 h-4 animate-spin" />
-                                            ) : otpSent ? (
-                                                otpTimer > 0 ? `${otpTimer}s` : 'Resend'
-                                            ) : (
-                                                <><MessageSquare className="w-4 h-4" /> Code</>
-                                            )}
-                                        </motion.button>
-                                    </div>
-                                </div>
-
-                                {otpSent && !phoneVerified && (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        className="space-y-4"
-                                    >
-                                        <label className="block text-xs text-navy-400 font-bold uppercase tracking-wider">Verification Code</label>
-                                        <div className="flex gap-2 justify-between">
-                                            {otp.map((digit, i) => (
-                                                <input
-                                                    key={i}
-                                                    ref={el => otpRefs.current[i] = el}
-                                                    type="text"
-                                                    inputMode="numeric"
-                                                    maxLength={1}
-                                                    value={digit}
-                                                    onChange={e => handleOtpChange(i, e.target.value)}
-                                                    onKeyDown={e => handleOtpKeyDown(i, e)}
-                                                    className="w-12 h-12 text-center text-lg font-bold bg-white border border-navy-800 rounded-xl focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500/20 text-navy-50 font-mono"
-                                                />
-                                            ))}
-                                        </div>
-
-                                        <motion.button
-                                            whileHover={{ scale: 1.01 }}
-                                            whileTap={{ scale: 0.99 }}
-                                            type="button"
-                                            onClick={handleVerifyOtp}
-                                            disabled={isVerifyingOtp || isLoading || otp.join('').length < 6}
-                                            className="w-full py-3.5 rounded-xl bg-sage-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-sage-700 transition-all disabled:opacity-50"
-                                        >
-                                            {isVerifyingOtp || isLoading ? (
-                                                <><Loader2 className="w-4 h-4 animate-spin" /> Finalizing...</>
-                                            ) : (
-                                                <><CheckCircle className="w-4 h-4" /> Verify & Initialize Node</>
-                                            )}
-                                        </motion.button>
-                                    </motion.div>
-                                )}
-
-                                {!phoneVerified && (
-                                    <motion.button
-                                        whileHover={{ scale: 1.01 }}
-                                        whileTap={{ scale: 0.99 }}
-                                        type="button"
-                                        onClick={() => setStep(2)}
-                                        className="w-full py-3 rounded-xl bg-white border border-navy-800 text-navy-50 font-semibold flex items-center justify-center gap-2 hover:bg-navy-900/30 transition-all"
-                                    >
-                                        <ArrowLeft className="w-4 h-4" /> Back
-                                    </motion.button>
-                                )}
-                            </motion.div>
-                        )}
                     </AnimatePresence>
 
                     {/* OAuth Divider */}

@@ -1,0 +1,838 @@
+import crypto from 'crypto';
+import { getDb, queryDb, runDb } from '../config/db.js';
+import { writeAuditEvent } from '../services/auditLogger.js';
+
+const getUserId = (req) => req.user?.uid || req.user?.userId || null;
+
+const getPatientForUser = async (userId) => {
+    if (!userId) return null;
+    return getDb(
+        `SELECT p.*, u.email, u.name AS user_name, u.phone AS user_phone
+         FROM patients p
+         JOIN users u ON u.id = p.user_id
+         WHERE p.user_id = ?
+         LIMIT 1`,
+        [userId]
+    );
+};
+
+const getDoctorForUser = async (userId) => {
+    if (!userId) return null;
+    return getDb(
+        `SELECT d.*, u.email, u.name AS user_name, u.phone AS user_phone, u.status AS user_status
+         FROM doctors d
+         JOIN users u ON u.id = d.user_id
+         WHERE d.user_id = ?
+         LIMIT 1`,
+        [userId]
+    );
+};
+
+const normalize = (value) => String(value || '').trim();
+
+export const createAccessRequest = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const doctor = await getDoctorForUser(userId);
+
+        if (!doctor) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a doctor.'
+            });
+        }
+
+        if (doctor.user_status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_APPROVAL_REQUIRED',
+                message: doctor.user_status === 'pending'
+                    ? 'Your doctor account is awaiting administrator approval before you can request patient access.'
+                    : 'Your doctor account registration is not active.'
+            });
+        }
+
+        const {
+            patientId,
+            globalPatientId,
+            patientEmail,
+            patientPhone,
+            patientName,
+            hospital,
+            department,
+            reason,
+            duration,
+            urgency
+        } = req.body || {};
+
+        if (!patientId && !globalPatientId && !patientEmail && !patientPhone) {
+            return res.status(400).json({
+                success: false,
+                message: 'A patient identifier is required.'
+            });
+        }
+
+        let patient = null;
+
+        const doctorHospitalId = doctor.hospital_id || null;
+
+        if (!doctorHospitalId) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_CONTEXT_REQUIRED',
+                message: 'Doctor hospital assignment is required before requesting patient access.'
+            });
+        }
+
+        if (patientId) {
+            patient = await getDb(
+                `SELECT p.*, u.email, u.name AS user_name, u.phone AS user_phone
+                 FROM patients p
+                 JOIN users u ON u.id = p.user_id
+                 WHERE (p.id = ? OR p.user_id = ?)
+                   AND p.hospital_id = ?
+                 LIMIT 1`,
+                [patientId, patientId, doctorHospitalId]
+            );
+        }
+
+        if (!patient && globalPatientId) {
+            patient = await getDb(
+                `SELECT p.*, u.email, u.name AS user_name, u.phone AS user_phone
+                 FROM patients p
+                 JOIN users u ON u.id = p.user_id
+                 WHERE LOWER(p.global_patient_id) = LOWER(?)
+                   AND p.hospital_id = ?
+                 LIMIT 1`,
+                [globalPatientId, doctorHospitalId]
+            );
+        }
+
+        if (!patient && patientEmail) {
+            patient = await getDb(
+                `SELECT p.*, u.email, u.name AS user_name, u.phone AS user_phone
+                 FROM patients p
+                 JOIN users u ON u.id = p.user_id
+                 WHERE LOWER(u.email) = LOWER(?)
+                   AND p.hospital_id = ?
+                 LIMIT 1`,
+                [patientEmail, doctorHospitalId]
+            );
+        }
+
+        if (!patient && patientPhone) {
+            patient = await getDb(
+                `SELECT p.*, u.email, u.name AS user_name, u.phone AS user_phone
+                 FROM patients p
+                 JOIN users u ON u.id = p.user_id
+                 WHERE regexp_replace(COALESCE(p.contact_phone, u.phone, ''), '[^0-9]', '', 'g')
+                       = regexp_replace(?, '[^0-9]', '', 'g')
+                   AND p.hospital_id = ?
+                 LIMIT 1`,
+                [patientPhone, doctorHospitalId]
+            );
+        }
+
+        if (!patient) {
+            return res.status(404).json({
+                success: false,
+                message: 'Patient was not found in the HealthChain database.'
+            });
+        }
+
+        if (String(patient.user_id) === String(userId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'A patient cannot create an access request to themselves.'
+            });
+        }
+
+        const existing = await getDb(
+            `SELECT id, status, requested_at, expires_at
+             FROM access_requests
+             WHERE patient_id = ?
+               AND doctor_id = ?
+               AND status IN ('pending', 'approved')
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [patient.id, doctor.id]
+        );
+
+        if (existing) {
+            return res.json({
+                success: true,
+                requestId: existing.id,
+                request: existing,
+                existing: true
+            });
+        }
+
+        const hospitalId = doctorHospitalId;
+
+        const result = await runDb(
+            `INSERT INTO access_requests
+                (patient_id, doctor_id, hospital_id, department, reason, duration,
+                 urgency, status, patient_name, patient_email, patient_phone,
+                 global_patient_id, requested_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             RETURNING id, patient_id, doctor_id, hospital_id, department, reason,
+                       duration, urgency, status, patient_name, patient_email,
+                       patient_phone, global_patient_id, requested_at, created_at, updated_at`,
+            [
+                patient.id,
+                doctor.id,
+                hospitalId,
+                normalize(department) || doctor.specialty || 'General Medicine',
+                normalize(reason) || 'Medical Consultation',
+                normalize(duration) || '1 hour',
+                normalize(urgency) || 'Normal',
+                normalize(patient.full_name || patient.user_name || patientName) || 'Patient',
+                normalize(patient.email || patientEmail),
+                normalize(patient.contact_phone || patient.user_phone || patientPhone),
+                normalize(patient.global_patient_id || globalPatientId)
+            ]
+        );
+
+        const request = result.rows?.[0] || null;
+
+        if (!request) {
+            throw new Error('Failed to create access request.');
+        }
+
+        await writeAuditEvent({
+            userId,
+            role: 'doctor',
+            hospitalId,
+            action: 'ACCESS_REQUEST_CREATED',
+            resourceType: 'access_request',
+            resourceId: request.id,
+            details: {
+                patientId: patient.id,
+                doctorId: doctor.id,
+                urgency: request.urgency
+            },
+            requestId: request.id,
+            status: 'SUCCESS'
+        });
+
+        return res.status(201).json({
+            success: true,
+            requestId: request.id,
+            request
+        });
+    } catch (error) {
+        console.error('[AccessRequest] createAccessRequest:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to create access request.'
+        });
+    }
+};
+
+export const getPatientAccessRequests = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const patient = await getPatientForUser(userId);
+
+        if (!patient) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a patient.'
+            });
+        }
+
+        const rows = await queryDb(
+            `SELECT
+                ar.id,
+                ar.patient_id,
+                ar.doctor_id,
+                ar.hospital_id,
+                ar.department,
+                ar.reason,
+                ar.duration,
+                ar.urgency,
+                ar.status,
+                ar.patient_name,
+                ar.patient_email,
+                ar.patient_phone,
+                ar.global_patient_id,
+                ar.requested_at,
+                ar.responded_at,
+                ar.expires_at,
+                ar.created_at,
+                ar.updated_at,
+                du.name AS doctor_name,
+                du.email AS doctor_email,
+                d.specialty AS doctor_specialty
+             FROM access_requests ar
+             JOIN doctors d ON d.id = ar.doctor_id
+             JOIN users du ON du.id = d.user_id
+             WHERE ar.patient_id = ?
+               AND ar.status IN ('pending', 'approved')
+             ORDER BY ar.created_at DESC`,
+            [patient.id]
+        );
+
+        return res.json({
+            success: true,
+            requests: rows
+        });
+    } catch (error) {
+        console.error('[AccessRequest] getPatientAccessRequests:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to load access requests.',
+            requests: []
+        });
+    }
+};
+
+export const getAccessRequest = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const requestId = req.params.id;
+
+        const doctor = await getDoctorForUser(userId);
+        if (!doctor) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a doctor.'
+            });
+        }
+
+        const request = await getDb(
+            `SELECT
+                ar.*,
+                pu.name AS patient_user_name,
+                pu.email AS patient_user_email,
+                du.name AS doctor_name,
+                du.email AS doctor_email
+             FROM access_requests ar
+             JOIN patients p ON p.id = ar.patient_id
+             JOIN users pu ON pu.id = p.user_id
+             JOIN doctors d ON d.id = ar.doctor_id
+             JOIN users du ON du.id = d.user_id
+             WHERE ar.id = ?
+               AND ar.doctor_id = ?
+              AND ar.hospital_id = ?
+              AND p.hospital_id = ?
+             LIMIT 1`,
+            [requestId, doctor.id, doctor.hospital_id, doctor.hospital_id]
+        );
+
+        if (!request) {
+            return res.status(404).json({
+                success: false,
+                message: 'Access request not found.'
+            });
+        }
+
+        return res.json({
+            success: true,
+            request
+        });
+    } catch (error) {
+        console.error('[AccessRequest] getAccessRequest:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to load access request.'
+        });
+    }
+};
+
+export const approveAccessRequest = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const patient = await getPatientForUser(userId);
+
+        if (!patient) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a patient.'
+            });
+        }
+
+        const requestId = req.params.id;
+
+        const accessRequest = await getDb(
+            `SELECT ar.*, d.user_id AS doctor_user_id
+             FROM access_requests ar
+             JOIN doctors d ON d.id = ar.doctor_id
+             WHERE ar.id = ?
+               AND ar.patient_id = ?
+             LIMIT 1`,
+            [requestId, patient.id]
+        );
+
+        if (!accessRequest) {
+            return res.status(404).json({
+                success: false,
+                message: 'Access request not found.'
+            });
+        }
+
+        if (accessRequest.status !== 'pending') {
+            return res.status(409).json({
+                success: false,
+                message: `This request is already ${accessRequest.status}.`
+            });
+        }
+
+        const otpCode = crypto.randomInt(100000, 1000000).toString();
+        const otpHash = crypto
+            .createHash('sha256')
+            .update(otpCode)
+            .digest('hex');
+
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+        await runDb(
+            `UPDATE access_requests
+             SET status = 'approved',
+                 responded_at = CURRENT_TIMESTAMP,
+                 expires_at = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+               AND patient_id = ?
+               AND status = 'pending'`,
+            [expiresAt.toISOString(), requestId, patient.id]
+        );
+
+        await runDb(
+            `UPDATE otp_sessions
+             SET active = false
+             WHERE access_request_id = ?
+               AND active = true`,
+            [requestId]
+        );
+
+        const otpResult = await runDb(
+            `INSERT INTO otp_sessions
+                (access_request_id, patient_id, doctor_id, otp_hash, expires_at, active, created_at)
+             VALUES (?, ?, ?, ?, ?, true, CURRENT_TIMESTAMP)
+             RETURNING id, access_request_id, expires_at, active`,
+            [
+                requestId,
+                patient.id,
+                accessRequest.doctor_id,
+                otpHash,
+                expiresAt.toISOString()
+            ]
+        );
+
+        const otpSession = otpResult.rows?.[0];
+
+        await writeAuditEvent({
+            userId,
+            role: 'patient',
+            hospitalId: patient.hospital_id,
+            action: 'ACCESS_REQUEST_APPROVED',
+            resourceType: 'access_request',
+            resourceId: requestId,
+            details: {
+                otpSessionId: otpSession?.id,
+                doctorId: accessRequest.doctor_id,
+                otpExpiresAt: expiresAt.toISOString()
+            },
+            requestId,
+            status: 'SUCCESS'
+        });
+
+        return res.json({
+            success: true,
+            requestId,
+            otpCode,
+            otpExpiresAt: expiresAt.toISOString()
+        });
+    } catch (error) {
+        console.error('[AccessRequest] approveAccessRequest:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to approve access request.'
+        });
+    }
+};
+
+export const rejectAccessRequest = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const patient = await getPatientForUser(userId);
+
+        if (!patient) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a patient.'
+            });
+        }
+
+        const requestId = req.params.id;
+
+        const result = await runDb(
+            `UPDATE access_requests
+             SET status = 'rejected',
+                 responded_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+               AND patient_id = ?
+               AND status = 'pending'
+             RETURNING id, status, responded_at, updated_at`,
+            [requestId, patient.id]
+        );
+
+        const request = result.rows?.[0];
+
+        if (!request) {
+            return res.status(404).json({
+                success: false,
+                message: 'Pending access request not found.'
+            });
+        }
+
+        await writeAuditEvent({
+            userId,
+            role: 'patient',
+            hospitalId: patient.hospital_id,
+            action: 'ACCESS_REQUEST_REJECTED',
+            resourceType: 'access_request',
+            resourceId: requestId,
+            requestId,
+            status: 'SUCCESS'
+        });
+
+        return res.json({
+            success: true,
+            request
+        });
+    } catch (error) {
+        console.error('[AccessRequest] rejectAccessRequest:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to reject access request.'
+        });
+    }
+};
+
+export const verifyAccessRequestOTP = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const doctor = await getDoctorForUser(userId);
+
+        if (!doctor) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a doctor.'
+            });
+        }
+
+        if (doctor.user_status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_APPROVAL_REQUIRED',
+                message: 'Doctor account is not approved for patient access.'
+            });
+        }
+
+        if (!doctor.hospital_id) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_CONTEXT_REQUIRED',
+                message: 'Doctor hospital context is required for patient access.'
+            });
+        }
+
+        const requestId = req.params.id;
+        const otpCode = normalize(req.body?.otpCode);
+
+        if (!/^\d{6}$/.test(otpCode)) {
+            return res.status(400).json({
+                success: false,
+                message: 'OTP must be a 6-digit code.'
+            });
+        }
+
+        const otpSession = await getDb(
+            `SELECT
+                os.*,
+                ar.status AS request_status,
+                ar.duration
+             FROM otp_sessions os
+             JOIN access_requests ar ON ar.id = os.access_request_id
+             WHERE os.access_request_id = ?
+               AND os.doctor_id = ?
+               AND ar.doctor_id = ?
+               AND os.active = true
+             ORDER BY os.created_at DESC
+             LIMIT 1`,
+            [requestId, doctor.id, doctor.id]
+        );
+
+        if (!otpSession) {
+            return res.status(404).json({
+                success: false,
+                message: 'OTP session not found or no longer active.'
+            });
+        }
+
+        if (new Date(otpSession.expires_at) <= new Date()) {
+            await runDb(
+                `UPDATE otp_sessions SET active = false WHERE id = ?`,
+                [otpSession.id]
+            );
+
+            return res.status(410).json({
+                success: false,
+                message: 'OTP has expired.'
+            });
+        }
+
+        if (Number(otpSession.attempts || 0) >= 5) {
+            await runDb(
+                `UPDATE otp_sessions SET active = false WHERE id = ?`,
+                [otpSession.id]
+            );
+
+            return res.status(429).json({
+                success: false,
+                message: 'Too many incorrect OTP attempts. Please request a new approval.'
+            });
+        }
+
+        const suppliedHash = crypto
+            .createHash('sha256')
+            .update(otpCode)
+            .digest('hex');
+
+        if (!crypto.timingSafeEqual(
+            Buffer.from(suppliedHash, 'utf8'),
+            Buffer.from(otpSession.otp_hash, 'utf8')
+        )) {
+            await runDb(
+                `UPDATE otp_sessions
+                 SET attempts = attempts + 1,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [otpSession.id]
+            ).catch((attemptError) => {
+                console.error('[AccessRequest] Failed to record OTP attempt:', attemptError);
+                throw new Error('Failed to record OTP attempt.');
+            });
+
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid OTP code.'
+            });
+        }
+
+        const durationMatch = String(otpSession.duration || '').match(/(\d+(?:\.\d+)?)\s*(minute|hour|day)/i);
+        let durationMinutes = 60;
+
+        if (durationMatch) {
+            const amount = Number(durationMatch[1]);
+            const unit = durationMatch[2].toLowerCase();
+
+            if (unit === 'minute') durationMinutes = Math.max(1, Math.round(amount));
+            if (unit === 'hour') durationMinutes = Math.max(1, Math.round(amount * 60));
+            if (unit === 'day') durationMinutes = Math.max(1, Math.round(amount * 1440));
+        }
+
+        const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+
+        await runDb(
+            `UPDATE otp_sessions
+             SET active = false,
+                 verified_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [otpSession.id]
+        );
+
+        await runDb(
+            `UPDATE access_requests
+             SET status = 'used',
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+               AND doctor_id = ?`,
+            [requestId, doctor.id]
+        );
+
+        const sessionResult = await runDb(
+            `INSERT INTO active_access_sessions
+                (access_request_id, patient_id, doctor_id, expires_at, created_at)
+             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+             RETURNING id, access_request_id, patient_id, doctor_id, expires_at, created_at`,
+            [
+                requestId,
+                otpSession.patient_id,
+                doctor.id,
+                expiresAt.toISOString()
+            ]
+        );
+
+        const session = sessionResult.rows?.[0];
+
+        await writeAuditEvent({
+            userId,
+            role: 'doctor',
+            hospitalId: doctor.hospital_id,
+            action: 'OTP_VERIFIED_ACCESS_GRANTED',
+            resourceType: 'active_access_session',
+            resourceId: session?.id,
+            details: {
+                requestId,
+                patientId: otpSession.patient_id,
+                expiresAt: expiresAt.toISOString()
+            },
+            requestId,
+            status: 'SUCCESS'
+        });
+
+        return res.json({
+            success: true,
+            sessionId: session?.id,
+            expiresAt: expiresAt.toISOString()
+        });
+    } catch (error) {
+        console.error('[AccessRequest] verifyAccessRequestOTP:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to verify OTP.'
+        });
+    }
+};
+
+export const checkActiveAccessSession = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const doctor = await getDoctorForUser(userId);
+
+        if (!doctor) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a doctor.'
+            });
+        }
+
+        const patientIdentifier = normalize(
+            req.query.patientId || req.query.globalPatientId || req.query.patientEmail
+        );
+
+        if (!patientIdentifier) {
+            return res.status(400).json({
+                success: false,
+                message: 'Patient identifier is required.'
+            });
+        }
+
+        const patient = await getDb(
+            `SELECT p.*
+             FROM patients p
+             JOIN users u ON u.id = p.user_id
+             WHERE (
+                p.id::text = ?
+                OR p.user_id::text = ?
+                OR LOWER(p.global_patient_id) = LOWER(?)
+                OR LOWER(u.email) = LOWER(?)
+            )
+              AND p.hospital_id = ?
+            LIMIT 1`
+            [patientIdentifier, patientIdentifier, patientIdentifier, patientIdentifier, doctor.hospital_id]
+        );
+
+        if (!patient) {
+            return res.json({
+                success: true,
+                active: false
+            });
+        }
+
+        const session = await getDb(
+            `SELECT id, access_request_id, patient_id, doctor_id, expires_at, created_at
+             FROM active_access_sessions
+             WHERE doctor_id = ?
+               AND patient_id = ?
+               AND revoked_at IS NULL
+               AND expires_at > CURRENT_TIMESTAMP
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [doctor.id, patient.id]
+        );
+
+        return res.json({
+            success: true,
+            active: !!session,
+            session: session || null
+        });
+    } catch (error) {
+        console.error('[AccessRequest] checkActiveAccessSession:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to check active access session.'
+        });
+    }
+};
+
+export const revokeActiveAccessSession = async (req, res) => {
+    try {
+        const userId = getUserId(req);
+        const patient = await getPatientForUser(userId);
+
+        if (!patient) {
+            return res.status(403).json({
+                success: false,
+                message: 'Authenticated user is not registered as a patient.'
+            });
+        }
+
+        const sessionId = req.params.id;
+
+        const result = await runDb(
+            `UPDATE active_access_sessions
+             SET revoked_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+               AND patient_id = ?
+               AND revoked_at IS NULL
+             RETURNING id, revoked_at`,
+            [sessionId, patient.id]
+        );
+
+        const session = result.rows?.[0];
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                message: 'Active access session not found.'
+            });
+        }
+
+        await writeAuditEvent({
+            userId,
+            role: 'patient',
+            hospitalId: patient.hospital_id,
+            action: 'ACCESS_SESSION_REVOKED',
+            resourceType: 'active_access_session',
+            resourceId: sessionId,
+            status: 'SUCCESS'
+        });
+
+        return res.json({
+            success: true,
+            session
+        });
+    } catch (error) {
+        console.error('[AccessRequest] revokeActiveAccessSession:', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to revoke access session.'
+        });
+    }
+};
+
+export default {
+    createAccessRequest,
+    getPatientAccessRequests,
+    getAccessRequest,
+    approveAccessRequest,
+    rejectAccessRequest,
+    verifyAccessRequestOTP,
+    checkActiveAccessSession,
+    revokeActiveAccessSession
+};

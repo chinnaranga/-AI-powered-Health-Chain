@@ -83,20 +83,6 @@ export const GoogleAuthProvider = class {
     }
 };
 
-export const PhoneAuthProvider = class {
-    constructor() {
-        this.providerId = 'phone';
-        this.customParameters = {};
-    }
-    setCustomParameters(params) {
-        this.customParameters = { ...this.customParameters, ...params };
-        return this;
-    }
-    static credential(verificationId, code) {
-        return { providerId: 'phone', verificationId, code };
-    }
-};
-
 export const OAuthProvider = class {
     constructor(providerId) {
         this.providerId = providerId;
@@ -141,31 +127,8 @@ export const TwitterAuthProvider = class {
     }
 };
 
-export const RecaptchaVerifier = class {
-    constructor(container, parameters, authInstance) {
-        this.container = container;
-        this.parameters = parameters;
-        this.auth = authInstance;
-    }
-    render() {
-        return Promise.resolve(1);
-    }
-    verify() {
-        return Promise.resolve('mock_recaptcha_token');
-    }
-    clear() {}
-};
-
-export const signInWithPhoneNumber = async (authInstance, phoneNumber, appVerifier) => {
-    return {
-        verificationId: `verification_${Date.now()}`,
-        confirm: async (code) => ({
-            user: { phoneNumber, uid: `user_phone_${Date.now()}` }
-        })
-    };
-};
-
 export const signInWithPopup = async (authInstance, provider) => {
+    let googleAccessToken = '';
     let googleEmail = localStorage.getItem('hc_email') || '';
     let googleName = localStorage.getItem('hc_name') || '';
     let googlePhoto = localStorage.getItem('hc_photo') || '';
@@ -202,6 +165,7 @@ export const signInWithPopup = async (authInstance, provider) => {
             });
 
             if (token) {
+                googleAccessToken = token;
                 const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
                     headers: { Authorization: `Bearer ${token}` }
                 });
@@ -242,7 +206,7 @@ export const signInWithPopup = async (authInstance, provider) => {
     };
 
     auth.currentUser = verifiedGoogleUser;
-    return { user: verifiedGoogleUser };
+    return { user: verifiedGoogleUser, accessToken: googleAccessToken };
 };
 
 export const signInWithRedirect = async () => {};
@@ -315,13 +279,10 @@ export default {
     reauthenticateWithCredential,
     EmailAuthProvider,
     GoogleAuthProvider,
-    PhoneAuthProvider,
     OAuthProvider,
     GithubAuthProvider,
     FacebookAuthProvider,
     TwitterAuthProvider,
-    RecaptchaVerifier,
-    signInWithPhoneNumber,
     signInWithPopup,
     signInWithRedirect,
     getRedirectResult,

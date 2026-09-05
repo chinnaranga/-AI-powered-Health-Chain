@@ -20,8 +20,8 @@ router.post('/hospitals/register', async (req, res) => {
                 id, name, code, license_number, registration_number, address, city, state, country, 
                 contact_email, contact_phone, status, metadata, created_at, updated_at
             ) VALUES (
-                gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-            ) RETURNING id, name, code, license_number, registration_number, address, city, state, country, status, created_at`,
+                gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ) RETURNING id, name, code, city, state, country, status, created_at`,
             [
                 name,
                 hospitalCode,
@@ -41,7 +41,7 @@ router.post('/hospitals/register', async (req, res) => {
             id: `hosp_${Date.now()}`,
             name,
             code: hospitalCode,
-            status: 'approved'
+            status: 'pending'
         };
 
         await writeAuditEvent({
@@ -54,7 +54,7 @@ router.post('/hospitals/register', async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Hospital registered successfully in Neon PostgreSQL',
+            message: 'Hospital registration submitted for administrator approval.',
             hospital: {
                 ...hospitalData,
                 hospitalId: hospitalData.id,
@@ -68,12 +68,12 @@ router.post('/hospitals/register', async (req, res) => {
 });
 
 // 2. GET /api/hospitals - List hospitals from Neon PostgreSQL
-router.get('/hospitals', async (req, res) => {
+router.get('/hospitals', authMiddleware, async (req, res) => {
     try {
         const rows = await queryDb(
-            `SELECT id, name, code, license_number as "licenseNum", registration_number as "regNum", 
-                    address, city, state, country, contact_email, contact_phone, status, created_at as "createdAt" 
-             FROM hospitals 
+            `SELECT id, name, code, city, state, country, status, created_at as "createdAt"
+             FROM hospitals
+             WHERE status = 'approved'
              ORDER BY created_at DESC LIMIT 100`
         );
 
@@ -93,14 +93,27 @@ router.get('/hospitals', async (req, res) => {
 router.get('/hospitals/:id', authMiddleware, async (req, res) => {
     try {
         const hospital = await getDb(
-            `SELECT id, name, code, license_number as "licenseNum", registration_number as "regNum", 
-                    address, city, state, country, contact_email, contact_phone, status, created_at as "createdAt" 
+            `SELECT id, name, code, city, state, country, status, created_at as "createdAt"
              FROM hospitals WHERE id = ? OR code = ? LIMIT 1`,
             [req.params.id, req.params.id]
         );
 
         if (!hospital) {
             return res.status(404).json({ success: false, message: 'Hospital not found in PostgreSQL.' });
+        }
+
+        const requesterRole = req.user?.role || req.role;
+        const requesterHospitalId = req.user?.hospitalId || req.user?.tenantId || req.hospitalId;
+
+        if (
+            !['admin', 'super_admin'].includes(requesterRole) &&
+            requesterHospitalId !== hospital.id
+        ) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_ACCESS_DENIED',
+                message: 'You are not authorized to access this hospital.'
+            });
         }
 
         res.json({

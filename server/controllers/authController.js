@@ -2,8 +2,13 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db, { queryDb, getDb, runDb } from '../config/db.js';
 import { writeAuditEvent } from '../services/auditLogger.js';
+import { verifyGoogleAccessToken } from '../services/googleAuthService.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'healthchain-enterprise-jwt-secret-key-2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET environment variable is required.');
+}
 const JWT_EXPIRES_IN = '7d';
 
 /**
@@ -17,8 +22,8 @@ function generateToken(user, role, hospitalId) {
             email: user.email,
             name: user.name,
             role: role || user.role || 'patient',
-            hospitalId: hospitalId || user.hospital_id || 'default_hospital',
-            tenantId: hospitalId || user.hospital_id || 'default_tenant'
+            hospitalId: hospitalId || user.hospital_id || null,
+            tenantId: hospitalId || user.hospital_id || null
         },
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
@@ -30,11 +35,29 @@ function generateToken(user, role, hospitalId) {
  */
 export const registerUser = async (req, res) => {
     try {
-        const { email, password, name, role = 'patient', hospitalId = 'default_hospital', phone, abhaId, specialty, licenseNumber, ...extra } = req.body;
+        const { email, password, name, role = 'patient', hospitalId, phone, abhaId, specialty, licenseNumber, ...extra } = req.body;
 
         if (!email) {
             return res.status(400).json({ success: false, message: 'Email address is required.' });
         }
+
+        if (!password || typeof password !== 'string' || password.length < 8) {
+            return res.status(400).json({
+                success: false,
+                message: 'A password of at least 8 characters is required.'
+            });
+        }
+
+        if (!['patient', 'doctor'].includes(role)) {
+            return res.status(403).json({
+                success: false,
+                message: 'Self-registration is restricted to patient and doctor accounts.'
+            });
+        }
+
+        // Public registration cannot choose an arbitrary hospital/tenant.
+        // Hospital assignment must happen through an authenticated onboarding/admin flow.
+        const registrationHospitalId = null;
 
         const normalizedEmail = email.trim().toLowerCase();
         const existingUser = await getDb(`SELECT id, email FROM users WHERE email = ? LIMIT 1`, [normalizedEmail]);
@@ -45,7 +68,7 @@ export const registerUser = async (req, res) => {
 
         // Hash password securely with bcrypt
         const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash(password || 'HealthChain2026Pass!', salt);
+        const passwordHash = await bcrypt.hash(password, salt);
 
         const userName = name || extra.fullName || 'HealthChain User';
         const userPhone = phone || extra.phoneNumber || '';
@@ -69,7 +92,7 @@ export const registerUser = async (req, res) => {
                 `INSERT INTO patients (id, user_id, hospital_id, abha_id, full_name, contact_phone, created_at, updated_at)
                  VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                  ON CONFLICT (user_id) DO NOTHING`,
-                [userId, hospitalId !== 'default_hospital' ? hospitalId : null, abhaId || null, userName, userPhone]
+                [userId, registrationHospitalId, abhaId || null, userName, userPhone]
             );
         } else if (role === 'doctor') {
             const docInsert = await runDb(
@@ -77,7 +100,7 @@ export const registerUser = async (req, res) => {
                  VALUES (gen_random_uuid(), ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                  ON CONFLICT (user_id) DO NOTHING
                  RETURNING id`,
-                [userId, hospitalId !== 'default_hospital' ? hospitalId : null, specialty || 'General Medicine', licenseNumber || `LIC-${Date.now()}`]
+                [userId, registrationHospitalId, specialty || 'General Medicine', licenseNumber || `LIC-${Date.now()}`]
             );
             doctorId = docInsert.rows?.[0]?.id || null;
         }
@@ -93,13 +116,13 @@ export const registerUser = async (req, res) => {
             }
         } catch (e) {}
 
-        const token = generateToken(createdUser, role, hospitalId);
+        const token = generateToken(createdUser, role, registrationHospitalId);
 
         // Immutable Audit Log entry in Neon PostgreSQL
         await writeAuditEvent({
             userId,
             role,
-            hospitalId,
+            hospitalId: registrationHospitalId,
             action: role === 'doctor' ? 'DOCTOR_REGISTERED_PENDING' : 'USER_REGISTERED',
             resourceType: 'user',
             resourceId: userId,
@@ -155,42 +178,116 @@ export const loginUser = async (req, res) => {
         }
 
         const normalizedEmail = email.trim().toLowerCase();
-        let user = await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [normalizedEmail]);
+        const user = await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [normalizedEmail]);
 
         if (!user) {
-            // Auto-provision initial demo user profile if not present
-            const salt = await bcrypt.genSalt(10);
-            const passwordHash = await bcrypt.hash(password || 'HealthChain2026Pass!', salt);
-            const userName = 'HealthChain User';
-
-            const insertResult = await runDb(
-                `INSERT INTO users (id, email, password_hash, name, role, status, email_verified, onboarding_complete, created_at, updated_at)
-                 VALUES (gen_random_uuid(), ?, ?, ?, ?, 'active', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                 RETURNING id, email, name, role`,
-                [normalizedEmail, passwordHash, userName, role]
-            );
-
-            user = insertResult.rows?.[0] || await getDb(`SELECT * FROM users WHERE email = ? LIMIT 1`, [normalizedEmail]);
-
-            if (role === 'patient') {
-                await runDb(
-                    `INSERT INTO patients (id, user_id, full_name, created_at, updated_at)
-                     VALUES (gen_random_uuid(), ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                     ON CONFLICT (user_id) DO NOTHING`,
-                    [user.id, userName]
-                );
-            }
-        } else if (password && user.password_hash) {
-            // Verify password if provided
-            const isMatch = await bcrypt.compare(password, user.password_hash);
-            if (!isMatch && !password.startsWith('HealthChain')) {
-                return res.status(401).json({ success: false, message: 'Invalid email or password.' });
-            }
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password.'
+            });
         }
 
-        const userRole = user.role || role;
+        if (!password || typeof password !== 'string') {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password.'
+            });
+        }
+
+        if (!user.password_hash) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password.'
+            });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+
+        if (!isMatch) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password.'
+            });
+        }
+
+        const userRole = user.role;
+        const requestedRole = typeof role === 'string' ? role.trim().toLowerCase() : 'patient';
+
+        if (requestedRole !== userRole) {
+            await writeAuditEvent({
+                userId: user.id,
+                role: userRole,
+                hospitalId: user.hospital_id || null,
+                action: 'LOGIN_ROLE_MISMATCH',
+                resourceType: 'user',
+                resourceId: user.id,
+                details: {
+                    email: normalizedEmail,
+                    requestedRole,
+                    actualRole: userRole
+                },
+                ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+                userAgent: req.headers['user-agent'] || 'HealthChain Client',
+                status: 'REJECTED'
+            });
+
+            return res.status(403).json({
+                success: false,
+                code: 'ROLE_MISMATCH',
+                message: 'The requested login role does not match the account role.'
+            });
+        }
+
         const userStatus = user.status || 'active';
-        const hospitalId = user.hospital_id || 'default_hospital';
+        const hospitalId = user.hospital_id || null;
+
+        if (!['active'].includes(userStatus)) {
+            let message = 'Your account is not currently permitted to sign in.';
+
+            if (userStatus === 'pending' && userRole === 'doctor') {
+                message = 'Your doctor account is awaiting administrator approval.';
+            } else if (userStatus === 'pending') {
+                message = 'Your account is awaiting activation.';
+            } else if (userStatus === 'rejected') {
+                message = 'Your account registration was rejected.';
+            } else if (userStatus === 'suspended') {
+                message = 'Your account has been suspended. Please contact an administrator.';
+            }
+
+            await writeAuditEvent({
+                userId: user.id,
+                role: userRole,
+                hospitalId,
+                action: 'LOGIN_BLOCKED',
+                resourceType: 'user',
+                resourceId: user.id,
+                details: {
+                    email: normalizedEmail,
+                    role: userRole,
+                    status: userStatus
+                },
+                ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+                userAgent: req.headers['user-agent'] || 'HealthChain Client',
+                status: 'REJECTED'
+            });
+
+            return res.status(403).json({
+                success: false,
+                code: userStatus === 'pending'
+                    ? 'ACCOUNT_PENDING'
+                    : userStatus === 'rejected'
+                        ? 'ACCOUNT_REJECTED'
+                        : userStatus === 'suspended'
+                            ? 'ACCOUNT_SUSPENDED'
+                            : 'ACCOUNT_INACTIVE',
+                message
+            });
+        }
+
+        if (['doctor', 'patient'].includes(userRole) && !hospitalId) {
+            console.warn('[Login Notice] User has no hospital assignment:', user.id);
+        }
+
         const token = generateToken(user, userRole, hospitalId);
 
         // Fetch patient or doctor record if available
@@ -274,20 +371,34 @@ export const loginUser = async (req, res) => {
  */
 export const googleLogin = async (req, res) => {
     try {
-        const { googleUser = {}, role = 'patient' } = req.body;
+        const { googleAccessToken, role = 'patient' } = req.body;
 
-        const email = (googleUser.email || '').trim().toLowerCase();
-        const name = (
-            googleUser.name ||
-            googleUser.fullName ||
-            googleUser.displayName ||
-            'HealthChain User'
-        ).trim();
+        if (!['patient', 'doctor'].includes(role)) {
+            return res.status(403).json({
+                success: false,
+                message: 'Google self-registration is restricted to patient and doctor accounts.'
+            });
+        }
+
+        let verifiedGoogle;
+        try {
+            verifiedGoogle = await verifyGoogleAccessToken(googleAccessToken);
+        } catch (verificationError) {
+            console.warn('[Google Auth Verification Failed]:', verificationError.message);
+            return res.status(401).json({
+                success: false,
+                code: 'GOOGLE_AUTH_VERIFICATION_FAILED',
+                message: 'Google authentication could not be verified.'
+            });
+        }
+
+        const email = verifiedGoogle.email;
+        const name = verifiedGoogle.name || 'HealthChain User';
 
         if (!email) {
-            return res.status(400).json({
+            return res.status(401).json({
                 success: false,
-                message: 'Google account email required.'
+                message: 'Verified Google account email is required.'
             });
         }
 
@@ -338,7 +449,7 @@ export const googleLogin = async (req, res) => {
                     email,
                     passwordHash,
                     name,
-                    googleUser.phoneNumber || googleUser.phone || '',
+                    verifiedGoogle.phone || '' || '',
                     role,
                     initialStatus
                 ]
@@ -372,7 +483,7 @@ export const googleLogin = async (req, res) => {
                     [
                         user.id,
                         name,
-                        googleUser.phoneNumber || googleUser.phone || ''
+                        verifiedGoogle.phone || '' || ''
                     ]
                 );
             }
@@ -403,8 +514,8 @@ export const googleLogin = async (req, res) => {
                 [
                     user.id,
                     user.hospital_id || null,
-                    googleUser.specialty || 'General Medicine',
-                    googleUser.licenseNumber || `GOOGLE-LIC-${Date.now()}`
+                    verifiedGoogle.specialty || 'General Medicine',
+                    verifiedGoogle.licenseNumber || `GOOGLE-LIC-${Date.now()}`
                 ]
             );
         }
@@ -432,7 +543,7 @@ export const googleLogin = async (req, res) => {
                 [
                     user.id,
                     name || user.name || 'HealthChain User',
-                    googleUser.phoneNumber || googleUser.phone || user.phone || ''
+                    verifiedGoogle.phone || '' || user.phone || ''
                 ]
             );
         }
@@ -457,12 +568,81 @@ export const googleLogin = async (req, res) => {
             ) || {};
         }
 
-        const userRole = user.role || role;
+        const userRole = user.role;
         const userStatus = user.status || 'active';
+
+        if (userRole !== role) {
+            await writeAuditEvent({
+                userId: user.id,
+                role: userRole,
+                hospitalId: user.hospital_id || null,
+                action: 'GOOGLE_LOGIN_ROLE_MISMATCH',
+                resourceType: 'user',
+                resourceId: user.id,
+                details: {
+                    email,
+                    requestedRole: role,
+                    actualRole: userRole,
+                    provider: 'google.com'
+                },
+                ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+                userAgent: req.headers['user-agent'] || 'HealthChain Client',
+                status: 'REJECTED'
+            });
+
+            return res.status(403).json({
+                success: false,
+                code: 'ROLE_MISMATCH',
+                message: 'The requested Google login role does not match the account role.'
+            });
+        }
+
+        if (userStatus !== 'active') {
+            const message = userStatus === 'pending' && userRole === 'doctor'
+                ? 'Your doctor account is awaiting administrator approval.'
+                : userStatus === 'pending'
+                    ? 'Your account is awaiting activation.'
+                    : userStatus === 'rejected'
+                        ? 'Your account registration was rejected.'
+                        : userStatus === 'suspended'
+                            ? 'Your account has been suspended. Please contact an administrator.'
+                            : 'Your account is not currently permitted to sign in.';
+
+            await writeAuditEvent({
+                userId: user.id,
+                role: userRole,
+                hospitalId: user.hospital_id || null,
+                action: 'GOOGLE_LOGIN_BLOCKED',
+                resourceType: 'user',
+                resourceId: user.id,
+                details: {
+                    email,
+                    role: userRole,
+                    status: userStatus,
+                    provider: 'google.com'
+                },
+                ipAddress: req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+                userAgent: req.headers['user-agent'] || 'HealthChain Client',
+                status: 'REJECTED'
+            });
+
+            return res.status(403).json({
+                success: false,
+                code: userStatus === 'pending'
+                    ? 'ACCOUNT_PENDING'
+                    : userStatus === 'rejected'
+                        ? 'ACCOUNT_REJECTED'
+                        : userStatus === 'suspended'
+                            ? 'ACCOUNT_SUSPENDED'
+                            : 'ACCOUNT_INACTIVE',
+                message
+            });
+        }
+
         const token = generateToken(
             user,
             userRole,
-            user.hospital_id || 'default_hospital'
+            user.hospital_id || null
         );
 
         // Audit Log
@@ -475,7 +655,7 @@ export const googleLogin = async (req, res) => {
         await writeAuditEvent({
             userId: user.id,
             role: userRole,
-            hospitalId: user.hospital_id || 'default_hospital',
+            hospitalId: user.hospital_id || null,
             action: auditAction,
             resourceType: 'user',
             resourceId: user.id,
@@ -494,11 +674,11 @@ export const googleLogin = async (req, res) => {
             displayName: profileData.full_name || user.name || name,
             phoneNumber: user.phone || profileData.contact_phone || '',
             phone: user.phone || profileData.contact_phone || '',
-            photoURL: googleUser.photoURL || '',
+            photoURL: verifiedGoogle.picture || '',
             role: userRole,
             status: userStatus,
-            hospitalId: user.hospital_id || 'default_hospital',
-            tenantId: user.hospital_id || 'default_tenant',
+            hospitalId: user.hospital_id || null,
+            tenantId: user.hospital_id || null,
             doctorId: profileData.id || undefined,
 
             // Authoritative patient profile fields from Neon.
@@ -574,8 +754,8 @@ export const getMe = async (req, res) => {
             phone: user.phone || profileData.contact_phone || '',
             role: user.role,
             status: user.status || 'active',
-            hospitalId: user.hospital_id || 'default_hospital',
-            tenantId: user.hospital_id || 'default_tenant',
+            hospitalId: user.hospital_id || null,
+            tenantId: user.hospital_id || null,
             doctorId: profileData.id || undefined,
             abhaId: profileData.abha_id || '',
             dob: profileData.dob || '',
@@ -809,8 +989,8 @@ export const updatePatientProfile = async (req, res) => {
             phone: updatedUser.phone || updatedPatient.contact_phone || '',
             photoURL: photoURL || '',
             role: updatedUser.role,
-            hospitalId: updatedUser.hospital_id || 'default_hospital',
-            tenantId: updatedUser.hospital_id || 'default_tenant',
+            hospitalId: updatedUser.hospital_id || null,
+            tenantId: updatedUser.hospital_id || null,
             abhaId: updatedPatient.abha_id || '',
             dob: updatedPatient.dob || '',
             gender: updatedPatient.gender || '',

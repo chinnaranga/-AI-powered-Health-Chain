@@ -18,9 +18,139 @@ export const addRecord = async (req, res) => {
             consentStatus = 'approved', accessRoles = ['doctor', 'clinical', 'hospital_admin']
         } = req.body;
 
-        const effectivePatientId = patientId || req.user?.uid || 'pat_gen_' + Date.now();
-        const effectiveHospitalId = hospitalId || req.hospitalId || 'default_hospital';
-        const effectiveDoctorId = req.user?.role === 'doctor' ? req.user.uid : null;
+        const requesterId = req.user?.uid || req.user?.userId;
+        const requesterRole = req.user?.role || req.role || 'patient';
+
+        if (!requesterId) {
+            return res.status(401).json({
+                success: false,
+                code: 'AUTHENTICATION_REQUIRED',
+                error: 'Authenticated user is required to create a medical record.'
+            });
+        }
+
+        // Resolve the authenticated user from Neon. Never trust client-supplied
+        // patientId/hospitalId for ownership or tenant assignment.
+        const requester = await getDb(
+            `SELECT id, role, status, hospital_id
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [requesterId]
+        );
+
+        if (!requester) {
+            return res.status(404).json({
+                success: false,
+                code: 'USER_NOT_FOUND',
+                error: 'Authenticated user account was not found.'
+            });
+        }
+
+        if (requester.status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'ACCOUNT_NOT_ACTIVE',
+                error: 'Your account is not active and cannot create medical records.'
+            });
+        }
+
+        let effectivePatientId = null;
+        let effectiveHospitalId = null;
+        let effectiveDoctorId = null;
+
+        if (requester.role === 'patient') {
+            const patient = await getDb(
+                `SELECT id, hospital_id
+                 FROM patients
+                 WHERE user_id = ?
+                 LIMIT 1`,
+                [requester.id]
+            );
+
+            if (!patient) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_PROFILE_REQUIRED',
+                    error: 'A registered patient profile is required to create a medical record.'
+                });
+            }
+
+            // Patients can only create records for themselves.
+            effectivePatientId = patient.id;
+            effectiveHospitalId = patient.hospital_id || null;
+        } else if (requester.role === 'doctor') {
+            const doctor = await getDb(
+                `SELECT id, hospital_id
+                 FROM doctors
+                 WHERE user_id = ?
+                 LIMIT 1`,
+                [requester.id]
+            );
+
+            if (!doctor) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'DOCTOR_PROFILE_REQUIRED',
+                    error: 'A registered doctor profile is required to create medical records.'
+                });
+            }
+
+            const targetPatient = await getDb(
+                `SELECT id, hospital_id
+                 FROM patients
+                 WHERE id::text = ?
+                    OR user_id::text = ?
+                 LIMIT 1`,
+                [patientId || '', patientId || '']
+            );
+
+            if (!targetPatient) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'PATIENT_REQUIRED',
+                    error: 'A valid patient must be selected when creating a record as a doctor.'
+                });
+            }
+
+            // A doctor may create a record only after the patient has granted
+            // an active access session.
+            const activeSession = await getDb(
+                `SELECT id
+                 FROM active_access_sessions
+                 WHERE doctor_id = ?
+                   AND patient_id = ?
+                   AND revoked_at IS NULL
+                   AND expires_at > CURRENT_TIMESTAMP
+                 LIMIT 1`,
+                [doctor.id, targetPatient.id]
+            );
+
+            if (!activeSession) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_ACCESS_REQUIRED',
+                    error: 'Active patient access approval is required to create a medical record.'
+                });
+            }
+
+            effectivePatientId = targetPatient.id;
+            effectiveDoctorId = doctor.id;
+            effectiveHospitalId = doctor.hospital_id || targetPatient.hospital_id || null;
+        } else if (['clinical', 'hospital_admin', 'admin', 'super_admin'].includes(requester.role)) {
+            return res.status(403).json({
+                success: false,
+                code: 'RECORD_CREATION_NOT_PERMITTED',
+                error: `Role '${requester.role}' is not permitted to create medical records through this endpoint.`
+            });
+        } else {
+            return res.status(403).json({
+                success: false,
+                code: 'ROLE_NOT_PERMITTED',
+                error: 'Your role is not permitted to create medical records.'
+            });
+        }
+
         const recordTitle = title || (category ? `${category.toUpperCase()} Clinical Record` : 'Medical Clinical Record');
 
         // Encrypt the data payload before storing
@@ -138,9 +268,66 @@ export const getRecords = async (req, res) => {
             params.push(requesterId, requesterId);
         } else if (requesterRole === 'doctor' || requesterRole === 'clinical') {
             const targetPatient = patientIdForDoctor || patientId;
+
             if (targetPatient) {
+                const doctorUserId = requesterId;
+
+                const doctor = await getDb(
+                    `SELECT id
+                     FROM doctors
+                     WHERE user_id = ?
+                     LIMIT 1`,
+                    [doctorUserId]
+                );
+
+                if (!doctor) {
+                    return res.status(403).json({
+                        success: false,
+                        code: 'DOCTOR_PROFILE_REQUIRED',
+                        error: 'A registered doctor profile is required to access patient records.'
+                    });
+                }
+
+                const targetPatientRow = await getDb(
+                    `SELECT id
+                     FROM patients
+                     WHERE id::text = ?
+                        OR user_id::text = ?
+                     LIMIT 1`,
+                    [targetPatient, targetPatient]
+                );
+
+                if (!targetPatientRow) {
+                    return res.status(404).json({
+                        success: false,
+                        error: 'Patient not found.'
+                    });
+                }
+
+                const activeSession = await getDb(
+                    `SELECT id
+                     FROM active_access_sessions
+                     WHERE doctor_id = ?
+                       AND patient_id = ?
+                       AND revoked_at IS NULL
+                       AND expires_at > CURRENT_TIMESTAMP
+                     LIMIT 1`,
+                    [doctor.id, targetPatientRow.id]
+                );
+
+                if (!activeSession) {
+                    return res.status(403).json({
+                        success: false,
+                        code: 'PATIENT_ACCESS_REQUIRED',
+                        error: 'Active patient access approval is required to view these medical records.'
+                    });
+                }
+
                 querySql += ` AND patient_id = ?`;
-                params.push(targetPatient);
+                params.push(targetPatientRow.id);
+            } else {
+                querySql += ` AND doctor_id = ?`;
+                params.push(requesterId);
             }
         }
 

@@ -1,0 +1,1247 @@
+import express from 'express';
+import crypto from 'crypto';
+import db, { queryDb, getDb, runDb } from '../config/db.js';
+import { authMiddleware } from '../middleware/authMiddleware.js';
+import { createPresignedUploadUrl, createPresignedDownloadUrl, deleteR2Object } from '../services/r2Service.js';
+import { checkStorageQuota, recordStorageUsage, getMonthlyStorageUsage } from '../services/quotaService.js';
+import { writeAuditEvent } from '../services/auditLogger.js';
+
+const router = express.Router();
+
+// Supported Healthcare File Categories
+const ALLOWED_CATEGORIES = [
+    'lab_report',
+    'mri',
+    'ct_scan',
+    'xray',
+    'prescription',
+    'insurance',
+    'certificate',
+    'profile_image',
+    'medical_pdf',
+    'other_attachment'
+];
+
+// Max file size limit: 100MB
+const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+
+/**
+ * Resolve and authorize access to an R2 document.
+ * Authorization is always based on Neon relationships, never client-supplied metadata.
+ */
+async function authorizeDocumentAccess(req, meta) {
+    if (!meta) return { allowed: false, code: 'FILE_NOT_FOUND' };
+
+    const userId = req.user?.uid || req.user?.userId;
+    const role = req.role || req.user?.role || 'patient';
+
+    if (!userId) {
+        return { allowed: false, code: 'AUTH_REQUIRED' };
+    }
+
+    const user = await getDb(
+        `SELECT id, role, status, hospital_id
+         FROM users
+         WHERE id = ?
+         LIMIT 1`,
+        [userId]
+    );
+
+    if (!user || user.status !== 'active') {
+        return { allowed: false, code: 'USER_NOT_ACTIVE' };
+    }
+
+    if (user.role !== role) {
+        return { allowed: false, code: 'ROLE_MISMATCH' };
+    }
+
+    if (role === 'super_admin') {
+        return { allowed: true };
+    }
+
+    if (role === 'patient') {
+        const patient = await getDb(
+            `SELECT id, hospital_id
+             FROM patients
+             WHERE user_id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (!patient) {
+            return { allowed: false, code: 'PATIENT_PROFILE_REQUIRED' };
+        }
+
+        const ownsFile =
+            String(meta.patient_id || '') === String(patient.id) ||
+            String(meta.uploaded_for || '') === String(patient.id) ||
+            String(meta.uploaded_by || '') === String(userId);
+
+        return { allowed: ownsFile };
+    }
+
+    if (role === 'doctor') {
+        const doctor = await getDb(
+            `SELECT id, hospital_id
+             FROM doctors
+             WHERE user_id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (!doctor || !doctor.hospital_id) {
+            return { allowed: false, code: 'DOCTOR_PROFILE_REQUIRED' };
+        }
+
+        const sameHospital =
+            meta.hospital_id &&
+            String(meta.hospital_id) === String(doctor.hospital_id);
+
+        const isOwnUpload =
+            String(meta.uploaded_by || '') === String(userId) ||
+            String(meta.doctor_id || '') === String(doctor.id);
+
+        if (isOwnUpload && sameHospital) {
+            return { allowed: true };
+        }
+
+        if (!sameHospital || !meta.patient_id) {
+            return { allowed: false };
+        }
+
+        const activeSession = await getDb(
+            `SELECT aas.id
+             FROM active_access_sessions aas
+             JOIN patients p ON p.id = aas.patient_id
+             WHERE aas.doctor_id = ?
+               AND aas.patient_id = ?
+               AND p.hospital_id = ?
+               AND aas.revoked_at IS NULL
+               AND aas.expires_at > CURRENT_TIMESTAMP
+             LIMIT 1`,
+            [doctor.id, meta.patient_id, doctor.hospital_id]
+        );
+
+        return { allowed: !!activeSession };
+    }
+
+    if (['clinical', 'hospital_admin', 'admin'].includes(role)) {
+        if (!user.hospital_id || !meta.hospital_id) {
+            return { allowed: false, code: 'HOSPITAL_CONTEXT_REQUIRED' };
+        }
+
+        return {
+            allowed: String(user.hospital_id) === String(meta.hospital_id)
+        };
+    }
+
+    return { allowed: false, code: 'R2_ACCESS_DENIED' };
+}
+
+
+/**
+ * 1. POST /api/r2/presigned-upload-url
+ */
+router.post('/r2/presigned-upload-url', authMiddleware, async (req, res) => {
+    try {
+        const {
+            fileName,
+            fileType = 'medical_pdf',
+            fileSize,
+            contentType = 'application/pdf',
+            patientId,
+            doctorId,
+            hospitalId,
+            departmentId = 'radiology',
+            visibilityScope = 'hospital_internal',
+            consentStatus = 'approved'
+        } = req.body;
+
+        if (!fileName) {
+            return res.status(400).json({ success: false, message: 'fileName is required.' });
+        }
+
+        const bytesToUpload = Number(fileSize) || 0;
+        if (bytesToUpload > MAX_FILE_SIZE_BYTES) {
+            return res.status(400).json({ success: false, message: 'File size exceeds maximum permitted limit of 100MB.' });
+        }
+
+        const allowedVisibilityScopes = ['hospital_internal', 'doctor_patient'];
+        const allowedConsentStatuses = ['approved', 'pending', 'revoked'];
+
+        if (!allowedVisibilityScopes.includes(visibilityScope)) {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_VISIBILITY_SCOPE',
+                message: 'Invalid visibility scope.'
+            });
+        }
+
+        if (!allowedConsentStatuses.includes(consentStatus)) {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_CONSENT_STATUS',
+                message: 'Invalid consent status.'
+            });
+        }
+
+        const userId = req.user?.uid || req.user?.userId;
+        const role = req.role || req.user?.role || 'patient';
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                code: 'AUTH_REQUIRED',
+                message: 'Authentication required.'
+            });
+        }
+
+        const user = await getDb(
+            `SELECT id, role, status, hospital_id
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (!user || user.status !== 'active' || user.role !== role) {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_UPLOAD_DENIED',
+                message: 'Active authenticated user required.'
+            });
+        }
+
+        let targetTenant = user.hospital_id;
+        let targetPatient = null;
+        let targetDoctor = null;
+
+        if (role === 'super_admin') {
+            targetTenant = hospitalId || null;
+            targetPatient = patientId || null;
+            targetDoctor = doctorId || null;
+
+            if (!targetTenant) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'HOSPITAL_ID_REQUIRED',
+                    message: 'hospitalId is required for super administrator uploads.'
+                });
+            }
+        } else if (role === 'patient') {
+            const patient = await getDb(
+                `SELECT id, hospital_id
+                 FROM patients
+                 WHERE user_id = ?
+                 LIMIT 1`,
+                [userId]
+            );
+
+            if (!patient || !patient.hospital_id) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_PROFILE_REQUIRED',
+                    message: 'Registered patient profile with hospital context required.'
+                });
+            }
+
+            if (patientId && String(patientId) !== String(patient.id)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_OWNERSHIP_DENIED',
+                    message: 'Patients can only upload files for their own profile.'
+                });
+            }
+
+            if (hospitalId && String(hospitalId) !== String(patient.hospital_id)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'CROSS_HOSPITAL_ACCESS_DENIED',
+                    message: 'You cannot upload files to another hospital.'
+                });
+            }
+
+            targetTenant = patient.hospital_id;
+            targetPatient = patient.id;
+            targetDoctor = null;
+        } else if (role === 'doctor') {
+            const doctor = await getDb(
+                `SELECT id, hospital_id
+                 FROM doctors
+                 WHERE user_id = ?
+                 LIMIT 1`,
+                [userId]
+            );
+
+            if (!doctor || !doctor.hospital_id) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'DOCTOR_PROFILE_REQUIRED',
+                    message: 'Approved doctor profile with hospital context required.'
+                });
+            }
+
+            if (hospitalId && String(hospitalId) !== String(doctor.hospital_id)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'CROSS_HOSPITAL_ACCESS_DENIED',
+                    message: 'You cannot upload files to another hospital.'
+                });
+            }
+
+            if (doctorId && String(doctorId) !== String(doctor.id) && String(doctorId) !== String(userId)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'DOCTOR_OWNERSHIP_DENIED',
+                    message: 'You can only upload files as yourself.'
+                });
+            }
+
+            targetTenant = doctor.hospital_id;
+            targetDoctor = doctor.id;
+            targetPatient = patientId || null;
+
+            if (!targetPatient) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'PATIENT_REQUIRED',
+                    message: 'A valid patient must be selected when uploading a document as a doctor.'
+                });
+            }
+
+            const doctorPatientSession = await getDb(
+                `SELECT aas.id
+                 FROM active_access_sessions aas
+                 JOIN patients p ON p.id = aas.patient_id
+                 WHERE aas.doctor_id = ?
+                   AND aas.patient_id = ?
+                   AND p.hospital_id = ?
+                   AND aas.revoked_at IS NULL
+                   AND aas.expires_at > CURRENT_TIMESTAMP
+                 LIMIT 1`,
+                [doctor.id, targetPatient, doctor.hospital_id]
+            );
+
+            if (!doctorPatientSession) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_ACCESS_REQUIRED',
+                    message: 'Active patient access approval is required to upload a document.'
+                });
+            }
+        } else if (['clinical', 'hospital_admin', 'admin'].includes(role)) {
+            if (!user.hospital_id) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'HOSPITAL_CONTEXT_REQUIRED',
+                    message: 'Hospital context is required.'
+                });
+            }
+
+            if (hospitalId && String(hospitalId) !== String(user.hospital_id)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'CROSS_HOSPITAL_ACCESS_DENIED',
+                    message: 'You cannot upload files to another hospital.'
+                });
+            }
+
+            targetTenant = user.hospital_id;
+            targetPatient = patientId || null;
+            targetDoctor = doctorId || null;
+        } else {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_UPLOAD_DENIED',
+                message: 'This role is not authorized to upload files.'
+            });
+        }
+
+        if (!targetTenant) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_CONTEXT_REQUIRED',
+                message: 'Hospital context is required for file uploads.'
+            });
+        }
+
+        if (targetPatient) {
+            const patientExists = await getDb(
+                `SELECT id
+                 FROM patients
+                 WHERE id = ? AND hospital_id = ?
+                 LIMIT 1`,
+                [targetPatient, targetTenant]
+            );
+
+            if (!patientExists) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_CONTEXT_INVALID',
+                    message: 'The selected patient does not belong to this hospital.'
+                });
+            }
+        }
+
+        if (targetDoctor) {
+            const doctorExists = await getDb(
+                `SELECT id
+                 FROM doctors
+                 WHERE (id = ? OR user_id = ?) AND hospital_id = ?
+                 LIMIT 1`,
+                [targetDoctor, targetDoctor, targetTenant]
+            );
+
+            if (!doctorExists) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'DOCTOR_CONTEXT_INVALID',
+                    message: 'The selected doctor does not belong to this hospital.'
+                });
+            }
+
+            targetDoctor = doctorExists.id;
+        }
+
+        if (role === 'patient') {
+            targetDoctor = null;
+        }
+
+        if (!targetPatient && role !== 'patient') {
+            targetPatient = null;
+        }
+
+        // SERVER-SIDE QUOTA CHECK
+        const quotaCheck = await checkStorageQuota({
+            hospitalId: targetTenant,
+            requestedBytes: bytesToUpload,
+            operationType: 'upload'
+        });
+
+        if (!quotaCheck.isAllowed) {
+            await writeAuditEvent({
+                userId: req.user.uid,
+                role: req.role || 'patient',
+                action: 'FILE_UPLOAD_BLOCKED_QUOTA',
+                resourceType: 'file',
+                resourceId: fileName,
+                details: { reason: quotaCheck.reason, warningLevel: quotaCheck.warningLevel },
+                status: 'BLOCKED'
+            });
+
+            return res.status(429).json({
+                success: false,
+                isQuotaExceeded: true,
+                warningLevel: quotaCheck.warningLevel,
+                message: 'Monthly storage limit reached. Please upgrade your storage plan.',
+                reason: quotaCheck.reason,
+                resetAt: quotaCheck.resetAt
+            });
+        }
+
+        // Generate unique R2 file ID and Object Key
+        const fileId = `r2_doc_${crypto.randomBytes(8).toString('hex')}`;
+        const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        const objectKey = `hospitals/${targetTenant}/patients/${targetPatient}/${category}/${new Date().getFullYear()}/${fileId}_${sanitizedFileName}`;
+
+        // Generate S3-compatible Presigned Upload URL for Cloudflare R2
+        const presignedData = await createPresignedUploadUrl({
+            objectKey,
+            contentType,
+            expiresInSeconds: 900 // 15 minutes
+        });
+
+        // Audit Log
+        const auditLog = await writeAuditEvent({
+            userId: req.user.uid,
+            role: req.role || 'patient',
+            action: 'FILE_UPLOAD_INITIATED',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            details: { objectKey, fileName: sanitizedFileName, fileSize: bytesToUpload, contentType },
+            status: 'PENDING'
+        });
+
+        // Store Document Metadata in Neon PostgreSQL
+        const fileMetadata = {
+            fileId,
+            fileName: sanitizedFileName,
+            fileType: category,
+            fileSize: bytesToUpload,
+            contentType,
+            storageProvider: 'cloudflare-r2',
+            bucketName: presignedData.bucketName,
+            objectKey,
+            uploadedBy: req.user.uid,
+            uploadedFor: targetPatient,
+            patientId: targetPatient,
+            doctorId: targetDoctor,
+            hospitalId: targetTenant,
+            departmentId,
+            visibilityScope,
+            consentStatus,
+            uploadStatus: 'pending',
+            auditId: auditLog.auditId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+
+        try {
+            await runDb(
+                `INSERT INTO documents (
+                    id, file_id, patient_id, doctor_id, uploaded_by, uploaded_for,
+                    document_type, file_name, mime_type, file_size,
+                    storage_provider, storage_key, bucket_name, hospital_id, department_id,
+                    visibility_scope, consent_status, upload_status, audit_id, created_at, updated_at
+                ) VALUES (
+                    gen_random_uuid(), ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    'cloudflare-r2', ?, ?, ?, NULL,
+                    ?, ?, 'pending', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )`,
+                [
+                    fileId,
+                    targetPatient,
+                    targetDoctor,
+                    req.user.uid,
+                    targetPatient,
+                    category,
+                    sanitizedFileName,
+                    contentType,
+                    bytesToUpload,
+                    objectKey,
+                    presignedData.bucketName,
+                    targetTenant,
+                    visibilityScope,
+                    consentStatus,
+                    auditLog.auditId
+                ]
+            );
+        } catch (dbErr) {
+            console.error('[Documents Insert Error]:', dbErr);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to create document metadata'
+            });
+        }
+
+        res.status(201).json({
+            success: true,
+            fileId,
+            uploadUrl: presignedData.uploadUrl,
+            expiresIn: presignedData.expiresIn,
+            warningLevel: quotaCheck.warningLevel,
+            metadata: fileMetadata
+        });
+    } catch (err) {
+        console.error('[R2 Upload Presign Error]', err);
+        res.status(500).json({ success: false, message: 'Failed to generate presigned upload URL: ' + err.message });
+    }
+});
+
+/**
+ * 2. POST /api/r2/confirm-upload
+ */
+router.post('/r2/confirm-upload', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.body;
+        if (!fileId) {
+            return res.status(400).json({ success: false, message: 'fileId is required.' });
+        }
+
+        let docRow = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        if (!docRow) {
+            return res.status(404).json({
+                success: false,
+                code: 'FILE_NOT_FOUND',
+                message: 'File metadata was not found.'
+            });
+        }
+
+        if (docRow.upload_status === 'deleted') {
+            return res.status(410).json({
+                success: false,
+                code: 'FILE_DELETED',
+                message: 'This file has already been deleted.'
+            });
+        }
+
+        const access = await authorizeDocumentAccess(req, docRow);
+        if (!access.allowed) {
+            return res.status(403).json({
+                success: false,
+                code: access.code || 'R2_ACCESS_DENIED',
+                message: 'You are not authorized to confirm this upload.'
+            });
+        }
+
+        const userId = req.user?.uid || req.user?.userId;
+        const role = req.role || req.user?.role || 'patient';
+
+        if (role !== 'super_admin' && String(docRow.uploaded_by || '') !== String(userId)) {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_UPLOAD_CONFIRM_DENIED',
+                message: 'Only the uploader or super administrator can confirm this upload.'
+            });
+        }
+
+        const auditLog = await writeAuditEvent({
+            userId: req.user.uid,
+            action: 'FILE_UPLOAD_CONFIRMED',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            status: 'SUCCESS'
+        });
+
+        // Record Quota Usage in PostgreSQL
+        const fileSize = docRow ? Number(docRow.file_size) : 0;
+        const updatedQuota = await recordStorageUsage({
+            hospitalId: docRow.hospital_id,
+            departmentId: 'general',
+            userId: req.user.uid,
+            bytesDelta: fileSize,
+            operationType: 'upload',
+            fileType: docRow?.document_type || 'medical_pdf'
+        });
+
+        try {
+            await runDb(
+                `UPDATE documents SET upload_status = 'active', updated_at = CURRENT_TIMESTAMP, audit_id = ? WHERE file_id = ?`,
+                [auditLog.auditId, fileId]
+            );
+        } catch (e) {
+            console.error('[R2 Confirm Upload Update Error]:', e);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to activate document metadata'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'File upload confirmed and metadata saved in Neon PostgreSQL.',
+            metadata: {
+                fileId,
+                uploadStatus: 'active',
+                updatedAt: new Date().toISOString()
+            },
+            quota: updatedQuota
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 3. POST /api/r2/presigned-download-url
+ */
+router.post('/r2/presigned-download-url', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.body;
+        if (!fileId) {
+            return res.status(400).json({ success: false, message: 'fileId is required.' });
+        }
+
+        const meta = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        if (meta) {
+            const access = await authorizeDocumentAccess(req, meta);
+            if (!access.allowed) {
+                return res.status(access.code === 'FILE_NOT_FOUND' ? 404 : 403).json({
+                    success: false,
+                    code: access.code || 'R2_ACCESS_DENIED',
+                    message: 'You are not authorized to access this file.'
+                });
+            }
+        }
+
+        if (!meta) {
+            // Check in medical_records if not in documents
+            const rec = await getDb(`SELECT * FROM medical_records WHERE r2_file_id = ? OR id = ? LIMIT 1`, [fileId, fileId]);
+            if (!rec) {
+                return res.status(404).json({ success: false, message: 'File record not found.' });
+            }
+
+            const recordMeta = {
+                ...rec,
+                patient_id: rec.patient_id,
+                doctor_id: rec.doctor_id,
+                hospital_id: rec.hospital_id,
+                uploaded_by: rec.created_by || rec.updated_by || null,
+                uploaded_for: rec.patient_id
+            };
+
+            const access = await authorizeDocumentAccess(req, recordMeta);
+            if (!access.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    code: access.code || 'R2_ACCESS_DENIED',
+                    message: 'You are not authorized to access this medical record.'
+                });
+            }
+
+            const downloadUrl = rec.download_url;
+            if (!downloadUrl) {
+                return res.status(404).json({
+                    success: false,
+                    code: 'FILE_URL_NOT_FOUND',
+                    message: 'No download URL is available for this medical record.'
+                });
+            }
+            return res.json({
+                success: true,
+                downloadUrl,
+                fileName: rec.file_name || 'document.pdf',
+                contentType: 'application/pdf'
+            });
+        }
+
+        const objectKey = meta.storage_key;
+        const presignedData = await createPresignedDownloadUrl({
+            objectKey,
+            expiresInSeconds: 900
+        });
+
+        await writeAuditEvent({
+            userId: req.user.uid,
+            action: 'FILE_DOWNLOAD',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            status: 'SUCCESS'
+        });
+
+        res.json({
+            success: true,
+            downloadUrl: presignedData.downloadUrl,
+            expiresIn: presignedData.expiresIn,
+            fileName: meta.file_name,
+            contentType: meta.mime_type,
+            metadata: meta
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 4. POST /api/r2/presigned-preview-url
+ */
+router.post('/r2/presigned-preview-url', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.body;
+        if (!fileId) {
+            return res.status(400).json({ success: false, message: 'fileId is required.' });
+        }
+
+        const meta = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        if (meta) {
+            const access = await authorizeDocumentAccess(req, meta);
+            if (!access.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    code: access.code || 'R2_ACCESS_DENIED',
+                    message: 'You are not authorized to preview this file.'
+                });
+            }
+        }
+
+        if (!meta) {
+            const rec = await getDb(`SELECT * FROM medical_records WHERE r2_file_id = ? OR id = ? LIMIT 1`, [fileId, fileId]);
+
+            if (!rec) {
+                return res.status(404).json({
+                    success: false,
+                    code: 'FILE_NOT_FOUND',
+                    message: 'File record not found.'
+                });
+            }
+
+            const recordMeta = {
+                ...rec,
+                patient_id: rec.patient_id,
+                doctor_id: rec.doctor_id,
+                hospital_id: rec.hospital_id,
+                uploaded_by: rec.created_by || rec.updated_by || null,
+                uploaded_for: rec.patient_id
+            };
+
+            const access = await authorizeDocumentAccess(req, recordMeta);
+            if (!access.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    code: access.code || 'R2_ACCESS_DENIED',
+                    message: 'You are not authorized to preview this medical record.'
+                });
+            }
+
+            const downloadUrl = rec.download_url;
+            if (!downloadUrl) {
+                return res.status(404).json({
+                    success: false,
+                    code: 'FILE_URL_NOT_FOUND',
+                    message: 'No preview URL is available for this medical record.'
+                });
+            }
+
+            return res.json({
+                success: true,
+                previewUrl: downloadUrl,
+                fileName: rec.file_name || 'document.pdf',
+                contentType: 'application/pdf'
+            });
+        }
+
+        const presignedData = await createPresignedDownloadUrl({
+            objectKey: meta.storage_key,
+            expiresInSeconds: 600
+        });
+
+        res.json({
+            success: true,
+            previewUrl: presignedData.downloadUrl,
+            expiresIn: presignedData.expiresIn,
+            fileName: meta.file_name,
+            contentType: meta.mime_type,
+            metadata: meta
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 5. GET /api/r2/files
+ */
+router.get('/r2/files', authMiddleware, async (req, res) => {
+    try {
+        const { category } = req.query;
+        const userId = req.user?.uid || req.user?.userId;
+        const role = req.role || req.user?.role || 'patient';
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                code: 'AUTH_REQUIRED',
+                message: 'Authentication required.'
+            });
+        }
+
+        const user = await getDb(
+            `SELECT id, role, status, hospital_id
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (!user || user.status !== 'active' || user.role !== role) {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_ACCESS_DENIED',
+                message: 'You are not authorized to list these files.'
+            });
+        }
+
+        let sql = `SELECT * FROM documents WHERE upload_status != 'deleted'`;
+        const params = [];
+
+        if (role === 'super_admin') {
+            // Global administrative visibility.
+        } else if (role === 'patient') {
+            const patient = await getDb(
+                `SELECT id
+                 FROM patients
+                 WHERE user_id = ?
+                 LIMIT 1`,
+                [userId]
+            );
+
+            if (!patient) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_PROFILE_REQUIRED',
+                    message: 'Registered patient profile required.'
+                });
+            }
+
+            sql += ` AND (patient_id = ? OR uploaded_for = ? OR uploaded_by = ?)`;
+            params.push(patient.id, patient.id, userId);
+        } else if (role === 'doctor') {
+            const doctor = await getDb(
+                `SELECT id, hospital_id
+                 FROM doctors
+                 WHERE user_id = ?
+                 LIMIT 1`,
+                [userId]
+            );
+
+            if (!doctor || !doctor.hospital_id) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'DOCTOR_PROFILE_REQUIRED',
+                    message: 'Approved doctor profile with hospital context required.'
+                });
+            }
+
+            sql += ` AND (
+                uploaded_by = ?
+                OR (doctor_id = ? AND hospital_id = ?)
+                OR (
+                    hospital_id = ?
+                    AND patient_id IN (
+                        SELECT aas.patient_id
+                        FROM active_access_sessions aas
+                        WHERE aas.doctor_id = ?
+                          AND aas.revoked_at IS NULL
+                          AND aas.expires_at > CURRENT_TIMESTAMP
+                    )
+                )
+            )`;
+            params.push(
+                userId,
+                doctor.id,
+                doctor.hospital_id,
+                doctor.hospital_id,
+                doctor.id
+            );
+        } else if (['clinical', 'hospital_admin', 'admin'].includes(role)) {
+            if (!user.hospital_id) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'HOSPITAL_CONTEXT_REQUIRED',
+                    message: 'Hospital context is required.'
+                });
+            }
+
+            sql += ` AND hospital_id = ?`;
+            params.push(user.hospital_id);
+        } else {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_ACCESS_DENIED',
+                message: 'You are not authorized to list these files.'
+            });
+        }
+
+        if (category && category !== 'all') {
+            sql += ` AND document_type = ?`;
+            params.push(category);
+        }
+
+        sql += ` ORDER BY created_at DESC LIMIT 100`;
+
+        const rows = await queryDb(sql, params);
+
+        const files = rows.map(r => ({
+            fileId: r.file_id,
+            fileName: r.file_name,
+            fileType: r.document_type,
+            fileSize: Number(r.file_size),
+            contentType: r.mime_type,
+            uploadStatus: r.upload_status,
+            createdAt: r.created_at
+        }));
+
+        res.json({
+            success: true,
+            totalFiles: files.length,
+            files
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, files: [] });
+    }
+});
+
+/**
+ * 6. DELETE /api/r2/file/:fileId
+ */
+router.delete('/r2/file/:fileId', authMiddleware, async (req, res) => {
+    try {
+        const { fileId } = req.params;
+        const meta = await getDb(`SELECT * FROM documents WHERE file_id = ? LIMIT 1`, [fileId]);
+
+        if (meta) {
+            const access = await authorizeDocumentAccess(req, meta);
+            if (!access.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    code: access.code || 'R2_ACCESS_DENIED',
+                    message: 'You are not authorized to delete this file.'
+                });
+            }
+
+            const role = req.role || req.user?.role || 'patient';
+            const userId = req.user?.uid || req.user?.userId;
+
+            const canDelete =
+                role === 'super_admin' ||
+                String(meta.uploaded_by || '') === String(userId);
+
+            if (!canDelete) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'R2_DELETE_DENIED',
+                    message: 'Only the uploader or super administrator can delete this file.'
+                });
+            }
+
+            try {
+                await deleteR2Object({ objectKey: meta.storage_key });
+            } catch (e) {
+                console.error('[R2 Delete Error]', e);
+                return res.status(502).json({
+                    success: false,
+                    code: 'R2_DELETE_FAILED',
+                    message: 'Failed to delete the file from object storage.'
+                });
+            }
+
+            try {
+                await runDb(`UPDATE documents SET upload_status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE file_id = ?`, [fileId]);
+            } catch (dbErr) {
+                console.error('[R2 Delete Metadata Update Error]:', dbErr);
+                return res.status(500).json({
+                    success: false,
+                    code: 'R2_DELETE_METADATA_UPDATE_FAILED',
+                    message: 'File was removed from object storage but document metadata could not be updated.'
+                });
+            }
+
+            if (!meta.hospital_id) {
+                console.error('[R2 Delete Error]: Document has no hospital context:', fileId);
+                return res.status(500).json({
+                    success: false,
+                    code: 'R2_DELETE_HOSPITAL_CONTEXT_MISSING',
+                    message: 'Document hospital context is missing.'
+                });
+            }
+
+            try {
+                await recordStorageUsage({
+                    hospitalId: meta.hospital_id,
+                    bytesDelta: -Number(meta.file_size || 0),
+                    operationType: 'delete'
+                });
+            } catch (quotaErr) {
+                console.error('[R2 Delete Quota Update Error]:', quotaErr);
+                return res.status(500).json({
+                    success: false,
+                    code: 'R2_DELETE_QUOTA_UPDATE_FAILED',
+                    message: 'File was deleted but storage quota could not be updated.'
+                });
+            }
+        }
+
+        await writeAuditEvent({
+            userId: req.user.uid,
+            action: 'FILE_DELETE',
+            resourceType: 'file_document',
+            resourceId: fileId,
+            status: 'SUCCESS'
+        });
+
+        res.json({
+            success: true,
+            message: 'File record marked as deleted in Neon PostgreSQL.',
+            fileId
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * 7. GET /api/r2/audit-logs
+ */
+router.get('/r2/audit-logs', authMiddleware, async (req, res) => {
+    try {
+        const userId = req.user?.uid || req.user?.userId;
+        const role = req.role || req.user?.role || 'patient';
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                code: 'AUTH_REQUIRED',
+                message: 'Authentication required.'
+            });
+        }
+
+        const user = await getDb(
+            `SELECT id, role, status, hospital_id
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (!user || user.status !== 'active' || user.role !== role) {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_AUDIT_ACCESS_DENIED',
+                message: 'You are not authorized to view audit logs.'
+            });
+        }
+
+        if (!['super_admin', 'hospital_admin', 'admin'].includes(role)) {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_AUDIT_ACCESS_DENIED',
+                message: 'Administrative access is required to view audit logs.'
+            });
+        }
+
+        let sql = `
+            SELECT id, actor_user_id as "requestedBy", action, resource_type as "fileType",
+                   resource_id as "fileId", status, timestamp, details
+            FROM audit_logs
+        `;
+        const params = [];
+
+        if (role !== 'super_admin') {
+            if (!user.hospital_id) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'HOSPITAL_CONTEXT_REQUIRED',
+                    message: 'Hospital context is required.'
+                });
+            }
+
+            sql += `
+                WHERE actor_user_id IN (
+                    SELECT id
+                    FROM users
+                    WHERE hospital_id = ?
+                )
+            `;
+            params.push(user.hospital_id);
+        }
+
+        sql += ` ORDER BY timestamp DESC LIMIT 50`;
+
+        const rows = await queryDb(sql, params);
+
+        const auditLogs = rows.map(r => ({
+            id: r.id,
+            auditId: r.id,
+            action: r.action,
+            fileId: r.fileId,
+            requestedBy: r.requestedBy,
+            status: r.status,
+            timestamp: r.timestamp,
+            details: typeof r.details === 'string' ? JSON.parse(r.details) : r.details
+        }));
+
+        res.json({
+            success: true,
+            totalLogs: auditLogs.length,
+            auditLogs
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, auditLogs: [] });
+    }
+});
+
+/**
+ * 8. GET /api/r2/storage-quota
+ */
+router.get('/r2/storage-quota', authMiddleware, async (req, res) => {
+    try {
+        const userId = req.user?.uid || req.user?.userId;
+        const role = req.role || req.user?.role || 'patient';
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                code: 'AUTH_REQUIRED',
+                message: 'Authentication required.'
+            });
+        }
+
+        const user = await getDb(
+            `SELECT id, role, status, hospital_id
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (!user || user.status !== 'active' || user.role !== role) {
+            return res.status(403).json({
+                success: false,
+                code: 'R2_QUOTA_ACCESS_DENIED',
+                message: 'You are not authorized to view storage quota.'
+            });
+        }
+
+        const requestedHospital = req.query.hospitalId || null;
+
+        if (role === 'super_admin') {
+            if (!requestedHospital) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'HOSPITAL_ID_REQUIRED',
+                    message: 'hospitalId is required for super administrator quota queries.'
+                });
+            }
+        } else {
+            if (!user.hospital_id) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'HOSPITAL_CONTEXT_REQUIRED',
+                    message: 'Hospital context is required.'
+                });
+            }
+
+            if (requestedHospital && String(requestedHospital) !== String(user.hospital_id)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'CROSS_HOSPITAL_ACCESS_DENIED',
+                    message: 'You cannot access another hospital storage quota.'
+                });
+            }
+        }
+
+        const targetHospital = requestedHospital || user.hospital_id;
+
+        if (!targetHospital) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_CONTEXT_REQUIRED',
+                message: 'Hospital context is required.'
+            });
+        }
+
+        const quotaInfo = await checkStorageQuota({ hospitalId: targetHospital });
+        const usage = quotaInfo.usage;
+
+        res.json({
+            success: true,
+            hospitalId: targetHospital,
+            month: usage.month,
+            totalStorageBytes: usage.totalStorageBytes || 0,
+            maxStorageBytes: usage.maxStorageBytes || 10737418240,
+            storagePercentage: Number(((usage.totalStorageBytes / usage.maxStorageBytes) * 100).toFixed(2)),
+            uploadCount: usage.uploadCount || 0,
+            downloadCount: usage.downloadCount || 0,
+            previewCount: usage.previewCount || 0,
+            deleteCount: usage.deleteCount || 0,
+            classARequests: usage.classARequests || 0,
+            maxClassARequests: usage.maxClassARequests || 1000000,
+            classAPercentage: Number(((usage.classARequests / usage.maxClassARequests) * 100).toFixed(2)),
+            classBRequests: usage.classBRequests || 0,
+            maxClassBRequests: usage.maxClassBRequests || 10000000,
+            classBPercentage: Number(((usage.classBRequests / usage.maxClassBRequests) * 100).toFixed(2)),
+            warningLevel: usage.warningLevel || 'normal',
+            isBlocked: usage.isBlocked || false,
+            resetAt: usage.resetAt,
+            categoryBreakdown: usage.categoryBreakdown || {}
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+export default router;

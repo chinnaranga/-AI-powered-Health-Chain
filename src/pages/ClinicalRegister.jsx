@@ -1,14 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, Link } from 'react-router-dom';
 import {
     Shield, Lock, Activity, ChevronRight, AlertCircle, CheckCircle,
     Eye, EyeOff, Key, Building2, MapPin, MonitorSmartphone, Stethoscope,
-    User, Mail, Phone, MessageSquare, ArrowLeft, ArrowRight, Loader2, FileKey2
+    User, Mail, ArrowLeft, ArrowRight, Loader2, FileKey2
 } from 'lucide-react';
 import {
-    RecaptchaVerifier,
-    signInWithPhoneNumber,
     GoogleAuthProvider,
     signInWithPopup
 } from 'firebase/auth';
@@ -30,118 +28,10 @@ export default function ClinicalRegister() {
         confirmPassword: '',
         hospital: 'Central Medical Hub',
         department: 'Cardiology',
-        clinicalId: '',
-        phone: ''
+        clinicalId: ''
     });
 
     const [showPassword, setShowPassword] = useState(false);
-
-    // Phone verification state
-    const [otpSent, setOtpSent] = useState(false);
-    const [otp, setOtp] = useState(['', '', '', '', '', '']);
-    const [isSendingOtp, setIsSendingOtp] = useState(false);
-    const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
-    const [phoneVerified, setPhoneVerified] = useState(false);
-    const [confirmationResult, setConfirmationResult] = useState(null);
-    const [otpTimer, setOtpTimer] = useState(0);
-    const otpRefs = useRef([]);
-    const recaptchaRef = useRef(null);
-
-    const { register, isLoading, error, clearError } = useAuthStore();
-
-    const update = (field, value) => setForm(f => ({ ...f, [field]: value }));
-
-    // OTP Timer
-    useEffect(() => {
-        if (otpTimer > 0) {
-            const timer = setTimeout(() => setOtpTimer(t => t - 1), 1000);
-            return () => clearTimeout(timer);
-        }
-    }, [otpTimer]);
-
-    // Setup invisible reCAPTCHA
-    const setupRecaptcha = () => {
-        if (recaptchaRef.current) {
-            try { recaptchaRef.current.clear(); } catch (_) { }
-            recaptchaRef.current = null;
-        }
-        recaptchaRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
-            size: 'invisible',
-            callback: () => { },
-        });
-        return recaptchaRef.current;
-    };
-
-    const handleSendOtp = async () => {
-        let phone = form.phone.trim().replace(/[\s\-()]/g, '');
-        if (phone && !phone.startsWith('+')) {
-            if (phone.length === 10) {
-                phone = '+91' + phone;
-            } else {
-                phone = '+' + phone;
-            }
-        }
-        if (!phone || phone.length < 10) {
-            toast.error('Enter a valid phone number with country code (e.g. +91xxxxxxxxxx)');
-            return;
-        }
-        update('phone', phone);
-        try {
-            setIsSendingOtp(true);
-            const verifier = setupRecaptcha();
-            const result = await signInWithPhoneNumber(auth, phone, verifier);
-            setConfirmationResult(result);
-            setOtpSent(true);
-            setOtpTimer(60);
-            toast.success(`OTP sent to ${phone}`);
-        } catch (err) {
-            console.error(err);
-            if (recaptchaRef.current) {
-                try { recaptchaRef.current.clear(); } catch (_) { }
-                recaptchaRef.current = null;
-            }
-            toast.error(err.message || 'Failed to send OTP code');
-        } finally {
-            setIsSendingOtp(false);
-        }
-    };
-
-    const handleOtpChange = (index, value) => {
-        if (!/^\d?$/.test(value)) return;
-        const next = [...otp];
-        next[index] = value;
-        setOtp(next);
-        if (value && index < 5) otpRefs.current[index + 1]?.focus();
-        if (!value && index > 0) otpRefs.current[index - 1]?.focus();
-    };
-
-    const handleOtpKeyDown = (index, e) => {
-        if (e.key === 'Backspace' && !otp[index] && index > 0) {
-            otpRefs.current[index - 1]?.focus();
-        }
-    };
-
-    const handleVerifyOtp = async () => {
-        const code = otp.join('');
-        if (code.length !== 6) {
-            toast.error('Enter the full 6-digit OTP');
-            return;
-        }
-        try {
-            setIsVerifyingOtp(true);
-            await confirmationResult.confirm(code);
-            setPhoneVerified(true);
-            toast.success('Phone verified! Registering clinical staff node...');
-            await handleSubmit();
-        } catch (err) {
-            console.error(err);
-            toast.error('Invalid OTP. Please try again.');
-            setOtp(['', '', '', '', '', '']);
-            otpRefs.current[0]?.focus();
-        } finally {
-            setIsVerifyingOtp(false);
-        }
-    };
 
     const handleSubmit = async () => {
         clearError();
@@ -151,7 +41,6 @@ export default function ClinicalRegister() {
                 email: form.email,
                 password: form.password,
                 role: 'clinical',
-                phone: form.phone,
                 hospital: form.hospital,
                 department: form.department,
                 clinicalId: form.clinicalId
@@ -238,7 +127,6 @@ export default function ClinicalRegister() {
 
     return (
         <div className="min-h-screen bg-navy-950 flex items-center justify-center p-6 relative font-sans">
-            <div id="recaptcha-container" />
 
             {/* Background elements */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -440,86 +328,7 @@ export default function ClinicalRegister() {
                         </motion.div>
                     )}
 
-                    {/* Step 3: MFA verification */}
-                    {step === 3 && (
-                        <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.3 }}>
-                            <div className="mb-6 text-center">
-                                <div className="w-16 h-16 rounded-2xl bg-sage-100/50 border border-sage-600/20 flex items-center justify-center mx-auto mb-4">
-                                    <Key className="w-8 h-8 text-sage-600" />
-                                </div>
-                                <h2 className="text-2xl font-bold text-navy-50 mb-2">Device Binding</h2>
-                                <p className="text-sm text-navy-400">Bind your clinical node with a secure phone verifier</p>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-navy-400 uppercase tracking-wider mb-2">Phone Number</label>
-                                    <div className="flex gap-2">
-                                        <div className="relative flex-1">
-                                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-navy-400" />
-                                            <input
-                                                type="tel" required
-                                                value={form.phone} onChange={e => update('phone', e.target.value)}
-                                                className="w-full bg-white border border-navy-800 rounded-lg pl-10 pr-4 py-3 text-sm text-navy-50 focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500/20 transition-all placeholder-navy-600"
-                                                placeholder="+1 555-0199"
-                                                disabled={otpSent && !phoneVerified}
-                                            />
-                                        </div>
-                                        <button
-                                            onClick={handleSendOtp}
-                                            disabled={isSendingOtp || (otpTimer > 0 && otpSent)}
-                                            className="shrink-0 px-4 py-3 rounded-lg bg-sage-100/50 border border-sage-600/30 text-sage-600 text-xs font-bold hover:bg-sage-100 transition-all disabled:opacity-50 flex items-center gap-2"
-                                        >
-                                            {isSendingOtp ? (
-                                                <Loader2 className="w-4 h-4 animate-spin" />
-                                            ) : otpSent ? (
-                                                otpTimer > 0 ? `${otpTimer}s` : 'Resend'
-                                            ) : (
-                                                <><MessageSquare className="w-4 h-4" /> Code</>
-                                            )}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {otpSent && !phoneVerified && (
-                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-                                        <label className="block text-xs font-bold text-navy-400 uppercase tracking-wider">Clinical OTP Code</label>
-                                        <div className="flex gap-2 justify-between">
-                                            {otp.map((digit, i) => (
-                                                <input
-                                                    key={i}
-                                                    ref={el => otpRefs.current[i] = el}
-                                                    type="text" maxLength={1} inputMode="numeric"
-                                                    value={digit}
-                                                    onChange={e => handleOtpChange(i, e.target.value)}
-                                                    onKeyDown={e => handleOtpKeyDown(i, e)}
-                                                    className="w-12 h-12 text-center text-lg font-bold bg-white border border-navy-800 rounded-lg focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500/20 text-navy-50 font-mono"
-                                                />
-                                            ))}
-                                        </div>
-
-                                        <button
-                                            onClick={handleVerifyOtp}
-                                            disabled={isVerifyingOtp || isLoading || otp.join('').length < 6}
-                                            className="w-full py-3.5 rounded-lg bg-sage-600 text-white font-bold text-sm hover:bg-sage-700 transition-colors flex justify-center shadow-soft hover:shadow-md items-center gap-2 disabled:opacity-50"
-                                        >
-                                            {isVerifyingOtp || isLoading ? (
-                                                <><Loader2 className="w-5 h-5 animate-spin" /> Enrolling...</>
-                                            ) : (
-                                                <><CheckCircle className="w-4 h-4" /> Verify & Authorize Station</>
-                                            )}
-                                        </button>
-                                    </motion.div>
-                                )}
-
-                                {!phoneVerified && (
-                                    <button onClick={() => setStep(2)} className="w-full py-3.5 rounded-lg bg-white border border-navy-800 text-navy-400 font-semibold hover:text-navy-50 transition-colors flex justify-center items-center gap-2">
-                                        <ArrowLeft className="w-4 h-4" /> Back
-                                    </button>
-                                )}
-                            </div>
-                        </motion.div>
-                    )}
+                    
                 </AnimatePresence>
 
                 <p className="text-center text-sm text-navy-400 mt-6">

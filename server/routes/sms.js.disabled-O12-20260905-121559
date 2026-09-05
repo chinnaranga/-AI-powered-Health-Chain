@@ -1,0 +1,37 @@
+import express from 'express';
+import { authMiddleware } from '../middleware/authMiddleware.js';
+
+const router = express.Router();
+
+router.post('/send-sms', authMiddleware, async (req, res) => {
+    const { phone, patientName, patientId, globalPatientId } = req.body;
+    
+    // Validate inputs
+    if (!phone || typeof phone !== 'string' || !phone.trim()) {
+        return res.status(400).json({ error: 'Phone number is required' });
+    }
+    if (!patientName || typeof patientName !== 'string' || !patientName.trim()) {
+        return res.status(400).json({ error: 'Patient name is required' });
+    }
+    
+    const sanitizedPhone = phone.trim();
+    const sanitizedName = patientName.trim();
+    const sanitizedPatientId = (patientId || '').trim();
+    const sanitizedGlobalId = (globalPatientId || '').trim();
+    
+    const cleanPhone = sanitizedPhone.replace(/\D/g, '');
+    
+    const message = `Dear ${sanitizedName}, your HealthChain account has been successfully created. Patient UID: ${sanitizedPatientId}. Global Health ID: ${sanitizedGlobalId}.`;
+    
+    // Fallback console logs for simulated local SMS notifications
+    console.log(`\n========================================`);
+    console.log(`[SMS GATEWAY - MOCK] Sending SMS...`);
+    console.log(`To (Cleaned): ${cleanPhone}`);
+    console.log(`To (Raw): ${sanitizedPhone}`);
+    console.log(`Message: "${message}"`);
+    console.log(`========================================\n`);
+    
+    res.json({ success: true });
+});
+
+export default router;

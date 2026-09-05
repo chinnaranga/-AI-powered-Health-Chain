@@ -1,0 +1,646 @@
+import express from 'express';
+import db, { queryDb, getDb, runDb } from '../config/db.js';
+import { authMiddleware } from '../middleware/authMiddleware.js';
+import { writeAuditEvent } from '../services/auditLogger.js';
+import { realtimeService } from '../services/realtimeService.js';
+
+const router = express.Router();
+
+// ====================================================================
+// APPOINTMENTS
+// ====================================================================
+
+// 1. GET /api/appointments - Fetch appointments for patient or doctor
+router.get('/appointments', authMiddleware, async (req, res) => {
+    try {
+        const { patientId, doctorId, hospitalId, status } = req.query;
+        const requesterRole = req.role || req.user?.role;
+        const requesterId = req.user?.uid || req.user?.userId;
+
+        let sql = `SELECT * FROM appointments WHERE 1=1`;
+        const params = [];
+
+        if (requesterRole === 'patient') {
+            sql += ` AND patient_id = ?`;
+            params.push(requesterId);
+        } else if (requesterRole === 'doctor') {
+            sql += ` AND doctor_id = ?`;
+            params.push(doctorId || requesterId);
+        } else if (patientId) {
+            sql += ` AND patient_id = ?`;
+            params.push(patientId);
+        }
+
+        if (hospitalId && hospitalId !== 'all') {
+            sql += ` AND hospital_id = ?`;
+            params.push(hospitalId);
+        }
+
+        if (status) {
+            sql += ` AND status = ?`;
+            params.push(status);
+        }
+
+        sql += ` ORDER BY scheduled_at ASC LIMIT 100`;
+
+        const rows = await queryDb(sql, params);
+        res.json({ success: true, appointments: rows });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, appointments: [] });
+    }
+});
+
+// 2. POST /api/appointments - Schedule a new appointment
+router.post('/appointments', authMiddleware, async (req, res) => {
+    try {
+        const { patientId, doctorId, hospitalId, scheduledAt, timeSlot, type, notes, patientName, doctorName } = req.body;
+
+        const effectivePatientId = patientId || req.user?.uid;
+        if (!effectivePatientId || !scheduledAt) {
+            return res.status(400).json({ success: false, message: 'patientId and scheduledAt are required.' });
+        }
+
+        const insertRes = await runDb(
+            `INSERT INTO appointments (
+                id, patient_id, doctor_id, hospital_id, scheduled_at, time_slot, status, type, notes, patient_name, doctor_name, created_at, updated_at
+            ) VALUES (
+                gen_random_uuid(), ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ) RETURNING *`,
+            [
+                effectivePatientId,
+                doctorId || effectivePatientId,
+                hospitalId || null,
+                new Date(scheduledAt).toISOString(),
+                timeSlot || '10:00 AM',
+                type || 'General Consultation',
+                notes || '',
+                patientName || req.user?.name || 'Patient',
+                doctorName || 'Doctor'
+            ]
+        );
+
+        const appointment = insertRes.rows?.[0] || { id: `appt_${Date.now()}`, status: 'scheduled' };
+
+        // Real-time Event Push
+        realtimeService.emitToChannel(`patient:${effectivePatientId}`, 'APPOINTMENT_CREATED', appointment);
+        if (doctorId) {
+            realtimeService.emitToChannel(`doctor:${doctorId}`, 'APPOINTMENT_CREATED', appointment);
+        }
+
+        await writeAuditEvent({
+            userId: req.user?.uid,
+            action: 'APPOINTMENT_SCHEDULED',
+            resourceType: 'appointment',
+            resourceId: appointment.id,
+            details: { patientId: effectivePatientId, scheduledAt, type },
+            status: 'SUCCESS'
+        });
+
+        res.status(201).json({ success: true, appointment });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ====================================================================
+// CONSENTS
+// ====================================================================
+
+// 3. GET /api/consents - Get consents visible to the authenticated user
+router.get('/consents', authMiddleware, async (req, res) => {
+    try {
+        const requesterId = req.user?.uid || req.user?.userId;
+        const requester = await getDb(
+            `SELECT id, role, status, hospital_id AS "hospitalId"
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [requesterId]
+        );
+
+        if (!requester || requester.status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'ACCOUNT_NOT_ACTIVE',
+                message: 'Active authenticated account required.'
+            });
+        }
+
+        let rows;
+
+        if (requester.role === 'patient') {
+            const patient = await getDb(
+                `SELECT id, hospital_id AS "hospitalId"
+                 FROM patients
+                 WHERE user_id = ?
+                 LIMIT 1`,
+                [requester.id]
+            );
+
+            if (!patient) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PATIENT_PROFILE_REQUIRED',
+                    message: 'Registered patient profile required.'
+                });
+            }
+
+            rows = await queryDb(
+                `SELECT *
+                 FROM consents
+                 WHERE patient_id = ?
+                 ORDER BY created_at DESC`,
+                [patient.id]
+            );
+        } else {
+            rows = await queryDb(
+                `SELECT c.*
+                 FROM consents c
+                 WHERE c.granted_to = ?
+                 ORDER BY c.created_at DESC`,
+                [requester.id]
+            );
+        }
+
+        return res.json({ success: true, consents: rows });
+    } catch (err) {
+        console.error('[GET /consents] error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to retrieve consents.',
+            consents: []
+        });
+    }
+});
+
+// 4. POST /api/consents - Patient grants consent to another user
+router.post('/consents', authMiddleware, async (req, res) => {
+    try {
+        const requesterId = req.user?.uid || req.user?.userId;
+        const requester = await getDb(
+            `SELECT id, role, status, hospital_id AS "hospitalId"
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [requesterId]
+        );
+
+        if (!requester || requester.status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'ACCOUNT_NOT_ACTIVE',
+                message: 'Active authenticated account required.'
+            });
+        }
+
+        if (requester.role !== 'patient') {
+            return res.status(403).json({
+                success: false,
+                code: 'PATIENT_CONSENT_REQUIRED',
+                message: 'Only the patient may grant this consent.'
+            });
+        }
+
+        const patient = await getDb(
+            `SELECT id, hospital_id AS "hospitalId"
+             FROM patients
+             WHERE user_id = ?
+             LIMIT 1`,
+            [requester.id]
+        );
+
+        if (!patient) {
+            return res.status(403).json({
+                success: false,
+                code: 'PATIENT_PROFILE_REQUIRED',
+                message: 'Registered patient profile required.'
+            });
+        }
+
+        const { grantedTo, purpose, scope = 'all_records', expiresAt } = req.body || {};
+
+        if (!grantedTo || !purpose) {
+            return res.status(400).json({
+                success: false,
+                message: 'grantedTo and purpose are required.'
+            });
+        }
+
+        const recipient = await getDb(
+            `SELECT id, role, status, hospital_id AS "hospitalId"
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [grantedTo]
+        );
+
+        if (!recipient || recipient.status !== 'active') {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_CONSENT_RECIPIENT',
+                message: 'Consent recipient is not an active HealthChain user.'
+            });
+        }
+
+        if (String(recipient.id) === String(requester.id)) {
+            return res.status(400).json({
+                success: false,
+                code: 'SELF_CONSENT_NOT_ALLOWED',
+                message: 'A patient cannot grant consent to themselves.'
+            });
+        }
+
+        if (
+            recipient.hospitalId &&
+            patient.hospitalId &&
+            String(recipient.hospitalId) !== String(patient.hospitalId) &&
+            !['admin', 'super_admin'].includes(recipient.role)
+        ) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_ACCESS_DENIED',
+                message: 'Consent recipient belongs to another hospital.'
+            });
+        }
+
+        const normalizedScope = String(scope).trim();
+        if (!normalizedScope || normalizedScope.length > 100) {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_CONSENT_SCOPE',
+                message: 'Invalid consent scope.'
+            });
+        }
+
+        let normalizedExpiresAt = null;
+        if (expiresAt) {
+            const parsedExpiry = new Date(expiresAt);
+            if (Number.isNaN(parsedExpiry.getTime()) || parsedExpiry <= new Date()) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'INVALID_CONSENT_EXPIRY',
+                    message: 'Consent expiry must be a valid future date.'
+                });
+            }
+            normalizedExpiresAt = parsedExpiry.toISOString();
+        }
+
+        const insertRes = await runDb(
+            `INSERT INTO consents (
+                id, patient_id, granted_to, hospital_id, purpose, scope,
+                status, granted_at, expires_at, created_at
+            ) VALUES (
+                gen_random_uuid(), ?, ?, ?, ?, ?, 'active',
+                CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP
+            ) RETURNING *`,
+            [
+                patient.id,
+                recipient.id,
+                patient.hospitalId || null,
+                String(purpose).trim().slice(0, 255),
+                normalizedScope,
+                normalizedExpiresAt
+            ]
+        );
+
+        const consent = insertRes.rows?.[0];
+
+        if (!consent) {
+            throw new Error('Failed to create consent.');
+        }
+
+        realtimeService.emitToChannel(
+            `patient:${patient.id}`,
+            'CONSENT_CHANGED',
+            consent
+        );
+        realtimeService.emitToUser(
+            recipient.id,
+            'CONSENT_GRANTED',
+            consent
+        );
+
+        await writeAuditEvent({
+            userId: requester.id,
+            role: requester.role,
+            hospitalId: patient.hospitalId,
+            action: 'CONSENT_GRANTED',
+            resourceType: 'consent',
+            resourceId: consent.id,
+            details: {
+                patientId: patient.id,
+                grantedTo: recipient.id,
+                purpose: String(purpose).trim().slice(0, 255),
+                scope: normalizedScope
+            },
+            status: 'SUCCESS'
+        });
+
+        return res.status(201).json({ success: true, consent });
+    } catch (err) {
+        console.error('[POST /consents] error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to create consent.'
+        });
+    }
+});
+
+// 5. POST /api/consents/:id/revoke - Patient revokes their own consent
+router.post('/consents/:id/revoke', authMiddleware, async (req, res) => {
+    try {
+        const requesterId = req.user?.uid || req.user?.userId;
+
+        const patient = await getDb(
+            `SELECT p.id, p.hospital_id AS "hospitalId", u.status
+             FROM patients p
+             JOIN users u ON u.id = p.user_id
+             WHERE p.user_id = ?
+             LIMIT 1`,
+            [requesterId]
+        );
+
+        if (!patient || patient.status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'PATIENT_PROFILE_REQUIRED',
+                message: 'Active registered patient account required.'
+            });
+        }
+
+        const { id } = req.params;
+
+        const result = await runDb(
+            `UPDATE consents
+             SET status = 'revoked',
+                 revoked_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+               AND patient_id = ?
+               AND status = 'active'
+             RETURNING id, status, revoked_at`,
+            [id, patient.id]
+        );
+
+        const consent = result.rows?.[0];
+
+        if (!consent) {
+            return res.status(404).json({
+                success: false,
+                message: 'Active consent not found.'
+            });
+        }
+
+        await writeAuditEvent({
+            userId: requesterId,
+            role: 'patient',
+            hospitalId: patient.hospitalId,
+            action: 'CONSENT_REVOKED',
+            resourceType: 'consent',
+            resourceId: id,
+            status: 'SUCCESS'
+        });
+
+        return res.json({
+            success: true,
+            message: 'Consent revoked successfully.',
+            consent
+        });
+    } catch (err) {
+        console.error('[POST /consents/:id/revoke] error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to revoke consent.'
+        });
+    }
+});
+
+// ====================================================================
+// PRESCRIPTIONS & LAB ORDERS
+// ====================================================================
+
+// 6. GET /api/prescriptions
+router.get('/prescriptions', authMiddleware, async (req, res) => {
+    try {
+        const patientId = req.query.patientId || (req.role === 'patient' ? req.user?.uid : null);
+        let sql = `SELECT * FROM prescriptions WHERE 1=1`;
+        const params = [];
+
+        if (patientId) {
+            sql += ` AND patient_id = ?`;
+            params.push(patientId);
+        }
+
+        sql += ` ORDER BY created_at DESC LIMIT 50`;
+        const rows = await queryDb(sql, params);
+        res.json({ success: true, prescriptions: rows });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, prescriptions: [] });
+    }
+});
+
+// 7. GET /api/lab-results
+router.get('/lab-results', authMiddleware, async (req, res) => {
+    try {
+        const patientId = req.query.patientId || (req.role === 'patient' ? req.user?.uid : null);
+        let sql = `SELECT * FROM lab_results WHERE 1=1`;
+        const params = [];
+
+        if (patientId) {
+            sql += ` AND patient_id = ?`;
+            params.push(patientId);
+        }
+
+        sql += ` ORDER BY created_at DESC LIMIT 50`;
+        const rows = await queryDb(sql, params);
+        res.json({ success: true, labResults: rows });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, labResults: [] });
+    }
+});
+
+// ====================================================================
+// USERS & PATIENTS PROFILE
+// ====================================================================
+
+// 8. GET /api/users - Admin user directory only
+router.get('/users', authMiddleware, async (req, res) => {
+    try {
+        const requesterId = req.user?.uid || req.user?.userId || null;
+        const requesterEmail = req.user?.email || null;
+
+        const requester = await getDb(
+            `SELECT id, role, status, hospital_id AS "hospitalId"
+             FROM users
+             WHERE (id = ? OR email = ?)
+             LIMIT 1`,
+            [requesterId, requesterEmail]
+        );
+
+        if (!requester || !['admin', 'super_admin'].includes(requester.role)) {
+            return res.status(403).json({
+                success: false,
+                code: 'ADMIN_REQUIRED',
+                message: 'Administrator privileges are required to list users.'
+            });
+        }
+
+        const { role } = req.query;
+        let sql = `SELECT id, email, name, phone, role, status,
+                          hospital_id AS "hospitalId",
+                          created_at AS "createdAt"
+                   FROM users
+                   WHERE 1=1`;
+        const params = [];
+
+        if (role) {
+            sql += ` AND role = ?`;
+            params.push(role);
+        }
+
+        if (requester.role !== 'super_admin') {
+            sql += ` AND hospital_id = ?`;
+            params.push(requester.hospitalId);
+        }
+
+        sql += ` ORDER BY created_at DESC LIMIT 100`;
+
+        const users = await queryDb(sql, params);
+
+        return res.json({ success: true, users });
+    } catch (err) {
+        console.error('[GET /users] error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to retrieve users.',
+            users: []
+        });
+    }
+});
+
+// 9. PUT /api/users/:id - Self profile update or admin-managed update
+router.put('/users/:id', authMiddleware, async (req, res) => {
+    try {
+        const requesterId = req.user?.uid || req.user?.userId || null;
+        const requesterEmail = req.user?.email || null;
+        const targetId = req.params.id;
+
+        const requester = await getDb(
+            `SELECT id, role, status, hospital_id AS "hospitalId"
+             FROM users
+             WHERE (id = ? OR email = ?)
+             LIMIT 1`,
+            [requesterId, requesterEmail]
+        );
+
+        if (!requester || requester.status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'USER_NOT_ACTIVE',
+                message: 'Active authenticated account required.'
+            });
+        }
+
+        const target = await getDb(
+            `SELECT id, role, status, hospital_id AS "hospitalId"
+             FROM users
+             WHERE id = ?
+             LIMIT 1`,
+            [targetId]
+        );
+
+        if (!target) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found.'
+            });
+        }
+
+        const isAdmin = ['admin', 'super_admin'].includes(requester.role);
+        const isSelf = String(requester.id) === String(target.id);
+
+        if (!isAdmin && !isSelf) {
+            return res.status(403).json({
+                success: false,
+                code: 'USER_ACCESS_DENIED',
+                message: 'You may only update your own profile.'
+            });
+        }
+
+        if (
+            isAdmin &&
+            requester.role !== 'super_admin' &&
+            requester.hospitalId &&
+            target.hospitalId !== requester.hospitalId
+        ) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_ACCESS_DENIED',
+                message: 'User belongs to another hospital.'
+            });
+        }
+
+        const { name, phone, avatarUrl, status } = req.body || {};
+
+        // Ordinary users may only modify their own profile fields.
+        if (!isAdmin && status !== undefined) {
+            return res.status(403).json({
+                success: false,
+                code: 'STATUS_UPDATE_FORBIDDEN',
+                message: 'Only administrators may change account status.'
+            });
+        }
+
+        // Only administrators may change status, and only to known lifecycle states.
+        const allowedStatuses = ['active', 'pending', 'rejected', 'suspended'];
+
+        if (status !== undefined && !allowedStatuses.includes(String(status))) {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_STATUS',
+                message: 'Invalid user status.'
+            });
+        }
+
+        await runDb(
+            `UPDATE users SET
+                name = COALESCE(?, name),
+                phone = COALESCE(?, phone),
+                avatar_url = COALESCE(?, avatar_url),
+                status = COALESCE(?, status),
+                updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [
+                name !== undefined ? String(name).trim() || null : null,
+                phone !== undefined ? String(phone).trim() || null : null,
+                avatarUrl !== undefined ? String(avatarUrl).trim() || null : null,
+                isAdmin && status !== undefined ? String(status) : null,
+                target.id
+            ]
+        );
+
+        await writeAuditEvent({
+            actorId: requester.id,
+            actorRole: requester.role,
+            action: 'USER_PROFILE_UPDATED',
+            resourceType: 'user',
+            resourceId: target.id,
+            metadata: {
+                selfUpdate: isSelf,
+                statusChanged: isAdmin && status !== undefined
+            }
+        });
+
+        return res.json({
+            success: true,
+            message: 'User updated successfully'
+        });
+    } catch (err) {
+        console.error('[PUT /users/:id] error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to update user.'
+        });
+    }
+});
+
+export default router;

@@ -75,86 +75,6 @@ export default function HospitalAuth({ mode = 'login' }) {
     }
   };
 
-  // Seeding test credentials dynamically
-  const handleUseDemoCredentials = async () => {
-    setLoading(true);
-    setError(null);
-    const demoEmail = 'admin@healthchain.org';
-    const demoPassword = 'TestPassword123!';
-    try {
-      let userCredential;
-      try {
-        userCredential = await signInWithEmailAndPassword(auth, demoEmail, demoPassword);
-      } catch (signInErr) {
-        if (
-          signInErr.code === 'auth/user-not-found' ||
-          signInErr.code === 'auth/invalid-credential' ||
-          signInErr.code === 'auth/wrong-password'
-        ) {
-          // 1. Create Auth credentials
-          userCredential = await createUserWithEmailAndPassword(auth, demoEmail, demoPassword);
-        } else {
-          throw signInErr;
-        }
-      }
-
-      const user = userCredential.user;
-      const userDocRef = doc(db, 'users', user.uid);
-      let userDoc = await getDoc(userDocRef);
-
-      // If document does not exist, seed organization and profile
-      if (!userDoc.exists()) {
-        const orgRef = await addDoc(collection(db, 'hospital_organizations'), {
-          name: 'HealthChain General Hospital (Demo Node)',
-          regNum: 'HC-DEMO-99',
-          licenseNum: 'LIC-HC-99',
-          type: 'Multi-Specialty',
-          ownership: 'Private',
-          beds: 250,
-          estYear: 2024,
-          address: '12 Medical District',
-          city: 'New Delhi',
-          state: 'Delhi',
-          country: 'India',
-          postalCode: '110001',
-          status: 'verified',
-          establishedDate: new Date().toISOString(),
-          verified: true,
-          onboardingCompleted: true
-        });
-
-        await setDoc(userDocRef, {
-          uid: user.uid,
-          email: demoEmail,
-          displayName: 'Demo Administrator',
-          phone: '+91 99999 88888',
-          designation: 'Chief Medical Officer',
-          role: 'hospital_admin',
-          orgId: orgRef.id,
-          associatedOrgs: [orgRef.id],
-          onboardingCompleted: true,
-          emailVerified: true,
-          createdAt: new Date().toISOString()
-        });
-
-        userDoc = await getDoc(userDocRef);
-      }
-
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        await setFirebaseUser(user, userData.role);
-        localStorage.setItem('hc_erp_org_id', userData.orgId);
-        navigate('/hospital/dashboard');
-      } else {
-        setError('Failed to load seeded user profile document.');
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -355,15 +275,7 @@ export default function HospitalAuth({ mode = 'login' }) {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {/* Seeding credentials trigger */}
-              <button
-                type="button"
-                onClick={handleUseDemoCredentials}
-                disabled={loading}
-                className="w-full py-3 bg-[#111111] hover:bg-black text-white font-bold uppercase tracking-wider text-xs rounded-[12px] transition-colors flex justify-center items-center gap-2"
-              >
-                Use Test Credentials
-              </button>
+              
 
               <div className="border-t border-[#ECECEC] pt-4 grid grid-cols-2 gap-2 text-center text-xs">
                 <button

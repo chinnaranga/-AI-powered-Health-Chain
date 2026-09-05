@@ -12,7 +12,7 @@ export const getApiBaseUrl = () => {
 export const apiClient = {
     async request(endpoint, options = {}) {
         const baseUrl = getApiBaseUrl();
-        const token = localStorage.getItem('hc_token') || localStorage.getItem('hc_cf_jwt') || 'session_token';
+        const token = localStorage.getItem('hc_token') || localStorage.getItem('hc_cf_jwt') || null;
         const headers = {
             'Content-Type': 'application/json',
             ...(options.headers || {})

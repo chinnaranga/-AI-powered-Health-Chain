@@ -10,7 +10,7 @@ const getR2Config = () => {
     return {
         accountId: process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_R2_ACCOUNT_ID || 'healthchain-r2-account',
         accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || 'r2_access_key_healthchain',
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || 'r2_secret_key_healthchain_secure_2026',
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
         bucketName: process.env.R2_BUCKET_NAME || process.env.CLOUDFLARE_R2_BUCKET_NAME || 'healthchain-sensitive-docs',
         endpoint: process.env.R2_ENDPOINT || '',
         region: 'auto',

@@ -440,7 +440,7 @@ export default function ProfileIdentityPage() {
                             </div>
                             <div>
                                 <span className="text-[9px] font-bold text-[#8899AA] uppercase tracking-wider block">Auth Method</span>
-                                <span className="text-xs font-semibold text-emerald-400">Phone OTP Verified</span>
+                                <span className="text-xs font-semibold text-emerald-400">Profile Verified</span>
                             </div>
                         </>
                     ) : (

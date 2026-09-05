@@ -124,8 +124,9 @@ const useAuthStore = create((set, get) => ({
                 onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
             };
 
-            localStorage.setItem('hc_cf_jwt', data.token || uid);
-            localStorage.setItem('hc_token', data.token || uid);
+            if (!data.token || typeof data.token !== 'string') { throw new Error('Authentication server did not return a valid session token.'); }
+           localStorage.setItem('hc_cf_jwt', data.token);
+            localStorage.setItem('hc_token', data.token);
             localStorage.setItem('hc_email', email);
             localStorage.setItem('hc_user_role', targetRole);
             localStorage.setItem('hc_role', targetRole);
@@ -133,7 +134,7 @@ const useAuthStore = create((set, get) => ({
 
             set({
                 user: fullUser,
-                token: data.token || uid,
+                token: data.token,
                 role: targetRole,
                 isAuthenticated: true,
                 isLoading: false
@@ -144,52 +145,7 @@ const useAuthStore = create((set, get) => ({
             set({ error: err.message, isLoading: false });
             throw err;
 
-            const uid = `usr_${Date.now().toString(36)}`;
-            const savedProfile = (() => {
-                try {
-                    const raw = localStorage.getItem('hc_patient_profile');
-                    return raw ? JSON.parse(raw) : null;
-                } catch (e) { return null; }
-            })();
-
-            const mockUser = {
-                id: uid,
-                uid,
-                email: email || '',
-                name: savedProfile?.displayName || '',
-                fullName: savedProfile?.fullName || '',
-                displayName: savedProfile?.displayName || '',
-                phoneNumber: savedProfile?.phoneNumber || localStorage.getItem('hc_phone') || '',
-                phone: savedProfile?.phoneNumber || localStorage.getItem('hc_phone') || '',
-                dob: savedProfile?.dob || '',
-                gender: savedProfile?.gender || '',
-                bloodGroup: savedProfile?.bloodGroup || '',
-                abhaId: savedProfile?.abhaId || '',
-                role: requestedRole,
-                loginMethod: 'email',
-                authProvider: 'password',
-                profileComplete: !!savedProfile?.profileComplete,
-                onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
-            };
-            const mockToken = `cf_jwt_${Date.now()}`;
-
-            localStorage.setItem('hc_cf_jwt', mockToken);
-            localStorage.setItem('hc_token', mockToken);
-            localStorage.setItem('hc_email', email);
-            localStorage.setItem('hc_user_role', requestedRole);
-            localStorage.setItem('hc_role', requestedRole);
-            localStorage.setItem('hc_user', JSON.stringify(mockUser));
-
-            set({
-                user: mockUser,
-                token: mockToken,
-                role: requestedRole,
-                isAuthenticated: true,
-                isLoading: false,
-                error: null
-            });
-
-            return { success: true, token: mockToken, user: mockUser };
+ 
         }
     },
 
@@ -198,6 +154,8 @@ const useAuthStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
+            let googleAccessToken = '';
+
             if (!googleUserPayload) {
                 const { GoogleAuthProvider, signInWithPopup } = await import('../firebase/auth');
                 const { auth } = await import('../firebase/config');
@@ -205,6 +163,7 @@ const useAuthStore = create((set, get) => ({
                 provider.setCustomParameters({ prompt: 'select_account' });
                 const result = await signInWithPopup(auth, provider);
                 googleUserPayload = result?.user || null;
+                googleAccessToken = result?.accessToken || '';
             }
 
             const googleName = googleUserPayload?.displayName || localStorage.getItem('hc_name') || '';
@@ -230,6 +189,7 @@ const useAuthStore = create((set, get) => ({
                 },
                 body: JSON.stringify({
                     role: requestedRole,
+                    googleAccessToken,
                     googleUser: {
                         email: googleEmail,
                         name: googleName,
@@ -301,89 +261,6 @@ const useAuthStore = create((set, get) => ({
         }
     },
 
-    // 3. Phone OTP Login Flow
-    loginPhone: async (phoneNumber, appVerifier) => {
-        set({ isLoading: true, error: null });
-        try {
-            localStorage.setItem('hc_phone', phoneNumber);
-            const confirmationResult = {
-                phoneNumber,
-                verificationId: `verify_${Date.now()}`,
-                confirm: async (code) => {
-                    return { success: true, phoneNumber };
-                }
-            };
-            set({ isLoading: false });
-            return confirmationResult;
-        } catch (err) {
-            set({ error: err.message, isLoading: false });
-            throw err;
-        }
-    },
-
-    verifyPhoneOtp: async (confirmationResult, code, requestedRole = 'patient') => {
-        set({ isLoading: true, error: null });
-        try {
-            const phone = confirmationResult?.phoneNumber || localStorage.getItem('hc_phone') || '';
-            const uid = `usr_phone_${Date.now().toString(36)}`;
-
-            const cleanPhone = phone.replace(/[^0-9]/g, '');
-            const gId = cleanPhone.length >= 8 ? `HCG-${cleanPhone.slice(-8)}` : `HCG-${uid.slice(-8).toUpperCase()}`;
-
-            const savedProfile = (() => {
-                try {
-                    const raw = localStorage.getItem('hc_patient_profile');
-                    return raw ? JSON.parse(raw) : null;
-                } catch (e) { return null; }
-            })();
-
-            const fullUser = {
-                id: uid,
-                uid,
-                phoneNumber: phone,
-                phone: phone,
-                email: savedProfile?.email || localStorage.getItem('hc_email') || '',
-                name: savedProfile?.displayName || localStorage.getItem('hc_name') || '',
-                fullName: savedProfile?.fullName || localStorage.getItem('hc_name') || '',
-                displayName: savedProfile?.displayName || localStorage.getItem('hc_name') || '',
-                dob: savedProfile?.dob || '',
-                gender: savedProfile?.gender || '',
-                bloodGroup: savedProfile?.bloodGroup || '',
-                abhaId: savedProfile?.abhaId || '',
-                photoURL: savedProfile?.photoURL || localStorage.getItem('hc_photo') || '',
-                role: requestedRole,
-                loginMethod: 'phone',
-                authProvider: 'phone',
-                isPhoneVerified: true,
-                globalPatientId: gId,
-                profileComplete: !!savedProfile?.profileComplete,
-                onboardingComplete: !!(savedProfile?.onboardingComplete || savedProfile?.dob)
-            };
-
-            const token = `phone_jwt_${Date.now()}`;
-            localStorage.setItem('hc_cf_jwt', token);
-            localStorage.setItem('hc_token', token);
-            localStorage.setItem('hc_phone', phone);
-            localStorage.setItem('hc_user_role', requestedRole);
-            localStorage.setItem('hc_role', requestedRole);
-            localStorage.setItem('hc_user', JSON.stringify(fullUser));
-
-            set({
-                user: fullUser,
-                token,
-                role: requestedRole,
-                isAuthenticated: true,
-                isLoading: false,
-                error: null
-            });
-
-            return { success: true, token, user: fullUser };
-        } catch (err) {
-            set({ error: err.message, isLoading: false });
-            throw err;
-        }
-    },
-
     register: async (userData) => {
         set({ isLoading: true, error: null });
         try {
@@ -409,8 +286,9 @@ const useAuthStore = create((set, get) => ({
                 onboardingComplete: false 
             };
 
-            localStorage.setItem('hc_cf_jwt', data.token || uid);
-            localStorage.setItem('hc_token', data.token || uid);
+            if (!data.token || typeof data.token !== 'string') { throw new Error('Authentication server did not return a valid session token.'); }
+           localStorage.setItem('hc_cf_jwt', data.token);
+            localStorage.setItem('hc_token', data.token);
             if (email) localStorage.setItem('hc_email', email);
             if (name) localStorage.setItem('hc_name', name);
             if (phone) localStorage.setItem('hc_phone', phone);
@@ -420,7 +298,7 @@ const useAuthStore = create((set, get) => ({
 
             set({
                 user: fullUser,
-                token: data.token || uid,
+                token: data.token,
                 role,
                 isAuthenticated: true,
                 isLoading: false

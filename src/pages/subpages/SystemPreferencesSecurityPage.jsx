@@ -112,7 +112,7 @@ export default function SystemPreferencesSecurityPage() {
                             <div className="flex justify-between items-center py-2 border-b border-[#1E2D4580]/50">
                                 <div>
                                     <span className="text-xs font-bold text-white block">Two-Factor Authentication (2FA)</span>
-                                    <span className="text-[10px] text-slate-500">Requires verification code sent to authenticated smartphone.</span>
+                                    <span className="text-[10px] text-slate-500">Requires verification through your authenticated session.</span>
                                 </div>
                                 <button
                                     onClick={() => setTwoFA(!twoFA)}

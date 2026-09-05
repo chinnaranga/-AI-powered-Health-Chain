@@ -49,7 +49,10 @@ class RealtimeService {
             const url = new URL(req.url, 'http://localhost');
             const token = url.searchParams.get('token');
             if (token) {
-                const secret = process.env.JWT_SECRET || 'healthchain-enterprise-jwt-secret-key-2026';
+                const secret = process.env.JWT_SECRET;
+                if (!secret) {
+                    throw new Error('JWT_SECRET environment variable is required.');
+                }
                 try {
                     const decoded = jwt.verify(token, secret);
                     authData.userId = decoded.uid || decoded.userId || decoded.sub;

@@ -9,22 +9,22 @@ export const userService = {
             const data = await apiClient.get(`/users/${userId}`);
             return data.user || data;
         } catch (e) {
-            console.warn('[userService] getUserById notice:', e.message);
-            return null;
+            console.error('[userService] getUserById failed:', e.message);
+            throw e;
         }
     },
 
     /**
-     * Get all users (optionally filtered by role)
+     * Get all users (admin directory)
      */
     getUsers: async (role = null) => {
         try {
-            const endpoint = role ? `/users?role=${role}` : '/users';
+            const endpoint = role ? `/users?role=${encodeURIComponent(role)}` : '/users';
             const data = await apiClient.get(endpoint);
             return data.users || (Array.isArray(data) ? data : []);
         } catch (e) {
-            console.warn('[userService] getUsers notice:', e.message);
-            return [];
+            console.error('[userService] getUsers failed:', e.message);
+            throw e;
         }
     },
 
@@ -36,31 +36,8 @@ export const userService = {
             await apiClient.put(`/users/${userId}`, data);
             return { id: userId, ...data };
         } catch (e) {
-            return { id: userId, ...data };
-        }
-    },
-
-    /**
-     * Update user status (e.g., active, revoked)
-     */
-    updateUserStatus: async (userId, status) => {
-        try {
-            await apiClient.put(`/users/${userId}`, { status });
-            return { id: userId, status };
-        } catch (e) {
-            return { id: userId, status };
-        }
-    },
-
-    /**
-     * Delete user from PostgreSQL
-     */
-    deleteUser: async (userId) => {
-        try {
-            await apiClient.delete(`/users/${userId}`);
-            return userId;
-        } catch (e) {
-            return userId;
+            console.error('[userService] updateUser failed:', e.message);
+            throw e;
         }
     }
 };

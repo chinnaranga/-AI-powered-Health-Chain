@@ -20,7 +20,7 @@ if (!fs.existsSync(envPath)) {
         fs.copyFileSync(envExamplePath, envPath);
     } else {
         console.log('[Setup Step 1/4] Writing standard .env file...');
-        fs.writeFileSync(envPath, `PORT=3001\nJWT_SECRET=healthchain-enterprise-jwt-secret-key-2026\nJWT_REFRESH_SECRET=healthchain-enterprise-refresh-secret-key-2026\n`);
+        fs.writeFileSync(envPath, `PORT=3001\nJWT_SECRET=\nJWT_REFRESH_SECRET=\n`);
     }
 }
 

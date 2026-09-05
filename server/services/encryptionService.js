@@ -1,54 +1,59 @@
 import crypto from 'crypto';
 
-const algorithm = "aes-256-cbc";
-// For simplicity in this demo, create a fixed key/iv or regenerate (in prod use env vars)
-// Since the prompt example regenerated them every time, let's stick to a fixed one for persistence across restarts
-// OR better, enable encryption that allows decryption later. The prompt's example generates random key/iv at runtime, 
-// which means if the server restarts, we can't decrypt old data!
-// We will use a fixed key/iv for demo purposes or store them.
-// Given constraints, I'll use a fixed key derived from a secret for now to ensure persistence.
-const secretKey = crypto.scryptSync('mySecretPassword', 'salt', 32);
-const fixedIv = Buffer.alloc(16, 0); // Deterministic IV for simplicity in this specific task context 
+const algorithm = 'aes-256-cbc';
 
-// NOTE: The user's provided code generates random keys every time:
-// const secretKey = crypto.randomBytes(32);
-// const iv = crypto.randomBytes(16);
-// This would break decryption on server restart unless keys are stored. 
-// I will stick to the user's provided structure but move the generation OUTSIDE the function to reuse it 
-// or accept that data is ephemeral if they restart. 
-// Actually, to make it work 'persistently' with SQLite, I should probably NOT generate random keys globally 
-// if I can't save them. 
-// However, I will follow the user's structure exactly as requested for the file content, 
-// but I will move the key generation to the top level so it persists for the process lifetime at least.
+function getEncryptionKey() {
+    const secret = process.env.RECORD_ENCRYPTION_KEY;
 
-const key = crypto.randomBytes(32);
-const iv = crypto.randomBytes(16);
+    if (!secret) {
+        throw new Error('RECORD_ENCRYPTION_KEY environment variable is required.');
+    }
+
+    const key = Buffer.from(secret, 'base64');
+
+    if (key.length !== 32) {
+        throw new Error('RECORD_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
+    }
+
+    return key;
+}
 
 export function encrypt(text) {
-    // Using the global key/iv for now to allow ensuring decryption works within session
-    // In a real app, these should be managed via KMS or environment variables
+    const key = getEncryptionKey();
+    const iv = crypto.randomBytes(16);
+
     const cipher = crypto.createCipheriv(algorithm, key, iv);
-    let encrypted = cipher.update(text);
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    const encrypted = Buffer.concat([
+        cipher.update(String(text), 'utf8'),
+        cipher.final()
+    ]);
+
     return {
-        iv: iv.toString("hex"),
-        content: encrypted.toString("hex"),
-        // We must expose the key if we want to decrypt later in a stateless way, 
-        // but usually key is secret. 
-        // The user's decrypt function takes 'hash' object with 'iv'.
-        // It assumes 'secretKey' is available to decrypt.
+        algorithm,
+        iv: iv.toString('base64'),
+        content: encrypted.toString('base64')
     };
 }
 
 export function decrypt(hash) {
-    const decipher = crypto.createDecipheriv(
-        algorithm,
-        key, // Use the same key
-        Buffer.from(hash.iv, "hex")
-    );
-    let decrypted = decipher.update(Buffer.from(hash.content, "hex"));
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    return decrypted.toString();
+    if (!hash?.iv || !hash?.content) {
+        throw new Error('Invalid encrypted payload.');
+    }
+
+    const key = getEncryptionKey();
+    const iv = Buffer.from(hash.iv, 'base64');
+
+    if (iv.length !== 16) {
+        throw new Error('Invalid encryption IV.');
+    }
+
+    const decipher = crypto.createDecipheriv(algorithm, key, iv);
+    const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(hash.content, 'base64')),
+        decipher.final()
+    ]);
+
+    return decrypted.toString('utf8');
 }
 
 export default { encrypt, decrypt };

@@ -43,7 +43,6 @@ import healthcareRoutes from './routes/healthcare.js';
 import aiRoutes from './routes/ai.js';
 import accessRoutes from './routes/access.js';
 import logRoutes from './routes/log.js';
-import smsRoutes from './routes/sms.js';
 import r2FilesRoutes from './routes/r2Files.js';
 import adminRoutes from './routes/admin.js';
 
@@ -139,7 +138,6 @@ app.use('/api', healthcareRoutes);
 app.use('/api', aiRoutes);
 app.use('/api', accessRoutes);
 app.use('/api', logRoutes);
-app.use('/api', smsRoutes);
 app.use('/api', r2FilesRoutes);
 app.use('/api', adminRoutes);
 

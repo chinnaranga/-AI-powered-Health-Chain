@@ -186,9 +186,7 @@ export default function ClinicalSettingsPage() {
 
                 {/* Notifications */}
                 <SectionCard icon={Bell} title="Notification Preferences" iconColor="text-amber-400" iconBg="bg-amber-500/10" iconBorder="border-amber-500/20">
-                    <SettingRow icon={Smartphone} label="SMS on Patient Approval" description="Receive a text when a patient approves or denies your OTP request.">
-                        <Toggle enabled={smsApproval} onToggle={() => setSmsApproval(!smsApproval)} />
-                    </SettingRow>
+                    
                     <SettingRow icon={Mail} label="Daily Access Summary" description="Receive an email digest of all records accessed during your shift.">
                         <Toggle enabled={emailSummary} onToggle={() => setEmailSummary(!emailSummary)} />
                     </SettingRow>

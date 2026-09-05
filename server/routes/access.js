@@ -20,10 +20,10 @@ import { authMiddleware } from '../middleware/authMiddleware.js';
 const router = express.Router();
 
 // Existing access-code and audit routes
-router.post('/access-code', setAccessCode);
-router.post('/verify-access', verifyAccess);
-router.post('/log', logAccess);
-router.get('/history', getAccessLogs);
+router.post('/access-code', authMiddleware, setAccessCode);
+router.post('/verify-access', authMiddleware, verifyAccess);
+router.post('/log', authMiddleware, logAccess);
+router.get('/history', authMiddleware, getAccessLogs);
 
 // Doctor → Patient access request workflow
 router.post('/access-requests', authMiddleware, createAccessRequest);

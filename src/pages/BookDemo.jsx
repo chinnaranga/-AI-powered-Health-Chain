@@ -60,7 +60,7 @@ export default function BookDemo() {
       icon: Smartphone,
       tagline: 'Sovereign patient records wallet & identity manager',
       permissions: ['Read Own Records', 'Grant/Revoke Doctor Access', 'Export PDF', 'View Access Logs'],
-      integrations: ['ABDM Ayushman Bharat', 'SMS Gateway', 'Encrypted Cloud Vault'],
+      integrations: ['ABDM Ayushman Bharat', 'Encrypted Cloud Vault'],
       workflow: [
         { name: 'Registration', desc: 'Verify mobile OTP, authenticate Aadhaar, and generate digital health ID (ABHA).' },
         { name: 'Profile Setup', desc: 'Add emergency contacts, allergies, blood group, and chronic condition declarations.' },
@@ -381,7 +381,6 @@ export default function BookDemo() {
     { name: 'Hospital ERP', version: 'v12.0', health: 'Healthy (99.8%)', desc: 'Direct database synchronizers for local hospital databases.' },
     { name: 'Laboratory Systems', version: 'v8.4', health: 'Healthy (99.9%)', desc: 'Diagnostic results publisher & signer bridge.' },
     { name: 'Insurance APIs', version: 'v4.2', health: 'Healthy (99.9%)', desc: 'Automated claim validation smart contracts hook.' },
-    { name: 'SMS Gateway', version: 'v2.0', health: 'Healthy (100%)', desc: 'Patient notifications & one-time-passwords system.' },
     { name: 'Email Gateway', version: 'v1.4', health: 'Healthy (100%)', desc: 'Enterprise report copies and alert messages delivery.' },
     { name: 'Cloud Storage', version: 'v3.0', health: 'Healthy (100%)', desc: 'Encrypted clinical records storage (IPFS backup).' },
     { name: 'Payment Gateway', version: 'v5.1', health: 'Healthy (99.9%)', desc: 'Consultation transaction settlement processing.' },

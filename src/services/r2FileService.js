@@ -17,16 +17,7 @@ async function getAuthToken() {
         return backendToken;
     }
 
-    // Firebase fallback is retained only for legacy/offline compatibility.
-    try {
-        if (auth.currentUser) {
-            return await auth.currentUser.getIdToken();
-        }
-    } catch (e) {
-        console.warn('[r2FileService] Firebase token fallback notice:', e.message);
-    }
-
-    return localStorage.getItem('hc_dev_token') || 'dev_session_token';
+    throw new Error('Authenticated backend JWT is required for Cloudflare R2 uploads. Please sign in again.');
 }
 
 async function getHeaders() {
@@ -38,68 +29,7 @@ async function getHeaders() {
 }
 
 // Fallback initial demo file records for UI display when local backend server is offline
-const INITIAL_DEMO_FILES = [
-    {
-        fileId: 'r2_doc_mri_881923',
-        fileName: 'Brain_MRI_Scan_Patient_882.dicom',
-        fileType: 'mri',
-        fileSize: 18452100,
-        contentType: 'application/dicom',
-        storageProvider: 'cloudflare-r2',
-        bucketName: 'healthchain-sensitive-docs',
-        objectKey: 'hospitals/hosp_central_01/patients/pat_882941/mri/2026/r2_doc_mri_881923.dicom',
-        uploadedBy: 'doc_441029',
-        uploadedFor: 'pat_882941',
-        patientId: 'pat_882941',
-        doctorId: 'doc_441029',
-        hospitalId: 'hosp_central_01',
-        departmentId: 'radiology',
-        visibilityScope: 'hospital_internal',
-        consentStatus: 'approved',
-        uploadStatus: 'active',
-        createdAt: new Date().toISOString()
-    },
-    {
-        fileId: 'r2_doc_lab_441029',
-        fileName: 'Complete_Blood_Panel_Lab_Report.pdf',
-        fileType: 'lab_report',
-        fileSize: 2450800,
-        contentType: 'application/pdf',
-        storageProvider: 'cloudflare-r2',
-        bucketName: 'healthchain-sensitive-docs',
-        objectKey: 'hospitals/hosp_central_01/patients/pat_882941/lab_report/2026/r2_doc_lab_441029.pdf',
-        uploadedBy: 'clinical_lab_tech',
-        uploadedFor: 'pat_882941',
-        patientId: 'pat_882941',
-        doctorId: 'doc_441029',
-        hospitalId: 'hosp_central_01',
-        departmentId: 'pathology',
-        visibilityScope: 'hospital_internal',
-        consentStatus: 'approved',
-        uploadStatus: 'active',
-        createdAt: new Date(Date.now() - 86400000).toISOString()
-    },
-    {
-        fileId: 'r2_doc_rx_992014',
-        fileName: 'Cardiology_Prescription_Digital_Sig.pdf',
-        fileType: 'prescription',
-        fileSize: 1204000,
-        contentType: 'application/pdf',
-        storageProvider: 'cloudflare-r2',
-        bucketName: 'healthchain-sensitive-docs',
-        objectKey: 'hospitals/hosp_central_01/patients/pat_882941/prescription/2026/r2_doc_rx_992014.pdf',
-        uploadedBy: 'doc_441029',
-        uploadedFor: 'pat_882941',
-        patientId: 'pat_882941',
-        doctorId: 'doc_441029',
-        hospitalId: 'hosp_central_01',
-        departmentId: 'cardiology',
-        visibilityScope: 'doctor_patient',
-        consentStatus: 'approved',
-        uploadStatus: 'active',
-        createdAt: new Date(Date.now() - 172800000).toISOString()
-    }
-];
+
 
 /**
  * Upload binary file directly to Cloudflare R2 via presigned PUT URL
@@ -148,16 +78,20 @@ export async function uploadMedicalFileToR2({
                 headers: { 'Content-Type': file.type || 'application/octet-stream' },
                 body: file
             });
-            if (putRes.ok) {
-                uploadSuccess = true;
-            } else {
-                console.warn('[Cloudflare R2 Direct PUT notice] Status:', putRes.status, putRes.statusText);
+            if (!putRes.ok) {
+                throw new Error(`Cloudflare R2 upload failed with status ${putRes.status} ${putRes.statusText}`);
             }
+            uploadSuccess = true;
         } catch (r2Err) {
-            console.warn('[Cloudflare R2 Stream notice] Direct PUT fetch error:', r2Err.message);
+            console.error('[Cloudflare R2 Upload Error]', r2Err);
+            throw r2Err;
         }
 
-        // Confirm upload
+        if (!uploadSuccess) {
+            throw new Error('Cloudflare R2 upload did not complete.');
+        }
+
+        // Confirm upload only after the binary PUT succeeded.
         const confirmRes = await fetch(`${getBase()}/r2/confirm-upload`, {
             method: 'POST',
             headers: await getHeaders(),
@@ -165,41 +99,19 @@ export async function uploadMedicalFileToR2({
         });
 
         const confirmData = await confirmRes.json();
+
+        if (!confirmRes.ok || !confirmData.success) {
+            throw new Error(confirmData.message || `R2 upload confirmation failed with status ${confirmRes.status}`);
+        }
+
         return {
             success: true,
             fileId,
             metadata: confirmData.metadata || metadata
         };
     } catch (err) {
-        // Fallback simulated upload registration if server is offline
-        const fileId = `r2_doc_${Date.now().toString(36)}`;
-        const newFile = {
-            fileId,
-            fileName: file.name,
-            fileType,
-            fileSize: file.size,
-            contentType: file.type || 'application/pdf',
-            storageProvider: 'cloudflare-r2',
-            bucketName: 'healthchain-sensitive-docs',
-            objectKey: `hospitals/${hospitalId || 'hosp_central_01'}/${fileType}/${fileId}_${file.name}`,
-            uploadedBy: 'current_user',
-            uploadedFor: patientId || 'pat_882941',
-            patientId: patientId || 'pat_882941',
-            doctorId: doctorId || 'doc_441029',
-            hospitalId: hospitalId || 'hosp_central_01',
-            departmentId: departmentId || 'radiology',
-            visibilityScope,
-            consentStatus: 'approved',
-            uploadStatus: 'active',
-            createdAt: new Date().toISOString()
-        };
-
-        INITIAL_DEMO_FILES.unshift(newFile);
-        return {
-            success: true,
-            fileId,
-            metadata: newFile
-        };
+        console.error('[r2FileService] Medical file upload failed:', err);
+        throw err;
     }
 }
 
@@ -222,15 +134,8 @@ export async function getR2DownloadUrl(fileId) {
 
         return data;
     } catch (err) {
-        const found = INITIAL_DEMO_FILES.find(f => f.fileId === fileId) || INITIAL_DEMO_FILES[0];
-        return {
-            success: true,
-            downloadUrl: '#',
-            expiresIn: 900,
-            fileName: found.fileName,
-            contentType: found.contentType,
-            auditId: `audit_r2_demo_${Date.now()}`
-        };
+        console.error('[r2FileService] Download URL request failed:', err);
+        throw err;
     }
 }
 
@@ -253,15 +158,8 @@ export async function getR2PreviewUrl(fileId) {
 
         return data;
     } catch (err) {
-        const found = INITIAL_DEMO_FILES.find(f => f.fileId === fileId) || INITIAL_DEMO_FILES[0];
-        return {
-            success: true,
-            previewUrl: '#',
-            expiresIn: 600,
-            fileName: found.fileName,
-            contentType: found.contentType,
-            auditId: `audit_r2_demo_${Date.now()}`
-        };
+        console.error('[r2FileService] Preview URL request failed:', err);
+        throw err;
     }
 }
 
@@ -286,12 +184,10 @@ export async function getR2FileList({ patientId, hospitalId, category } = {}) {
             throw new Error(data.message || 'Failed to fetch R2 file metadata list.');
         }
 
-        return data.files || INITIAL_DEMO_FILES;
+        return data.files || [];
     } catch (err) {
-        if (category && category !== 'all') {
-            return INITIAL_DEMO_FILES.filter(f => f.fileType === category);
-        }
-        return INITIAL_DEMO_FILES;
+        console.error('[r2FileService] File list request failed:', err);
+        throw err;
     }
 }
 
@@ -313,16 +209,8 @@ export async function deleteR2File(fileId) {
 
         return data;
     } catch (err) {
-        const index = INITIAL_DEMO_FILES.findIndex(f => f.fileId === fileId);
-        if (index !== -1) {
-            INITIAL_DEMO_FILES.splice(index, 1);
-        }
-        return {
-            success: true,
-            message: 'File record removed.',
-            fileId,
-            auditId: `audit_r2_del_${Date.now()}`
-        };
+        console.error('[r2FileService] File deletion request failed:', err);
+        throw err;
     }
 }
 
@@ -395,36 +283,8 @@ export async function getR2StorageQuota(hospitalId = 'default_hospital') {
 
         return data;
     } catch (err) {
-        const totalStorageBytes = INITIAL_DEMO_FILES.reduce((acc, f) => acc + (f.fileSize || 0), 0);
-        const maxStorageBytes = 10 * 1024 * 1024 * 1024;
-        const storagePercentage = Number(((totalStorageBytes / maxStorageBytes) * 100).toFixed(2));
-
-        return {
-            success: true,
-            hospitalId: hospitalId || 'hosp_central_01',
-            month: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
-            totalStorageBytes,
-            maxStorageBytes,
-            storagePercentage,
-            uploadCount: INITIAL_DEMO_FILES.length,
-            downloadCount: 14,
-            previewCount: 8,
-            deleteCount: 1,
-            classARequests: INITIAL_DEMO_FILES.length + 1,
-            maxClassARequests: 1000000,
-            classAPercentage: 0.0,
-            classBRequests: 22,
-            maxClassBRequests: 10000000,
-            classBPercentage: 0.0,
-            warningLevel: 'normal',
-            isBlocked: false,
-            resetAt: new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth() + 1, 1)).toISOString(),
-            categoryBreakdown: {
-                mri: 18452100,
-                lab_report: 2450800,
-                prescription: 1204000
-            }
-        };
+        console.error('[r2FileService] Storage quota request failed:', err);
+        throw err;
     }
 }
 

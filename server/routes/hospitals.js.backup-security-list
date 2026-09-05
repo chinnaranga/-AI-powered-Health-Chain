@@ -1,0 +1,119 @@
+import express from 'express';
+import db, { queryDb, getDb, runDb } from '../config/db.js';
+import { authMiddleware } from '../middleware/authMiddleware.js';
+import { writeAuditEvent } from '../services/auditLogger.js';
+
+const router = express.Router();
+
+// 1. POST /api/hospitals/register - Register a Hospital Organization in Neon PostgreSQL
+router.post('/hospitals/register', async (req, res) => {
+    try {
+        const { name, regNum, licenseNum, address, city, state, country, contactEmail, contactPhone, verificationDocuments } = req.body;
+        if (!name || !regNum || !licenseNum) {
+            return res.status(400).json({ success: false, message: 'Name, registration, and license numbers are required.' });
+        }
+
+        const hospitalCode = `HOSP_${Date.now().toString(36).toUpperCase()}`;
+
+        const insertRes = await runDb(
+            `INSERT INTO hospitals (
+                id, name, code, license_number, registration_number, address, city, state, country, 
+                contact_email, contact_phone, status, metadata, created_at, updated_at
+            ) VALUES (
+                gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            ) RETURNING id, name, code, license_number, registration_number, address, city, state, country, status, created_at`,
+            [
+                name,
+                hospitalCode,
+                licenseNum,
+                regNum,
+                address || '',
+                city || 'Hyderabad',
+                state || 'Telangana',
+                country || 'India',
+                contactEmail || null,
+                contactPhone || null,
+                JSON.stringify({ verificationDocuments: verificationDocuments || [] })
+            ]
+        );
+
+        const hospitalData = insertRes.rows?.[0] || {
+            id: `hosp_${Date.now()}`,
+            name,
+            code: hospitalCode,
+            status: 'pending'
+        };
+
+        await writeAuditEvent({
+            action: 'HOSPITAL_REGISTERED',
+            resourceType: 'hospital',
+            resourceId: hospitalData.id,
+            details: { name, code: hospitalCode, city: city || 'Hyderabad' },
+            status: 'SUCCESS'
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Hospital registration submitted for administrator approval.',
+            hospital: {
+                ...hospitalData,
+                hospitalId: hospitalData.id,
+                tenantId: hospitalData.id
+            }
+        });
+    } catch (err) {
+        console.error('[Hospital Register Error]:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// 2. GET /api/hospitals - List hospitals from Neon PostgreSQL
+router.get('/hospitals', async (req, res) => {
+    try {
+        const rows = await queryDb(
+            `SELECT id, name, code, license_number as "licenseNum", registration_number as "regNum", 
+                    address, city, state, country, contact_email, contact_phone, status, created_at as "createdAt" 
+             FROM hospitals 
+             ORDER BY created_at DESC LIMIT 100`
+        );
+
+        const hospitals = rows.map(r => ({
+            ...r,
+            hospitalId: r.id,
+            tenantId: r.id
+        }));
+
+        res.json({ success: true, hospitals });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message, hospitals: [] });
+    }
+});
+
+// 3. GET /api/hospitals/:id - Get Single Hospital
+router.get('/hospitals/:id', authMiddleware, async (req, res) => {
+    try {
+        const hospital = await getDb(
+            `SELECT id, name, code, license_number as "licenseNum", registration_number as "regNum", 
+                    address, city, state, country, contact_email, contact_phone, status, created_at as "createdAt" 
+             FROM hospitals WHERE id = ? OR code = ? LIMIT 1`,
+            [req.params.id, req.params.id]
+        );
+
+        if (!hospital) {
+            return res.status(404).json({ success: false, message: 'Hospital not found in PostgreSQL.' });
+        }
+
+        res.json({
+            success: true,
+            hospital: {
+                ...hospital,
+                hospitalId: hospital.id,
+                tenantId: hospital.id
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+export default router;

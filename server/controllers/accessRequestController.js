@@ -74,14 +74,25 @@ export const createAccessRequest = async (req, res) => {
 
         let patient = null;
 
+        const doctorHospitalId = doctor.hospital_id || null;
+
+        if (!doctorHospitalId) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_CONTEXT_REQUIRED',
+                message: 'Doctor hospital assignment is required before requesting patient access.'
+            });
+        }
+
         if (patientId) {
             patient = await getDb(
                 `SELECT p.*, u.email, u.name AS user_name, u.phone AS user_phone
                  FROM patients p
                  JOIN users u ON u.id = p.user_id
-                 WHERE p.id = ? OR p.user_id = ?
+                 WHERE (p.id = ? OR p.user_id = ?)
+                   AND p.hospital_id = ?
                  LIMIT 1`,
-                [patientId, patientId]
+                [patientId, patientId, doctorHospitalId]
             );
         }
 
@@ -91,8 +102,9 @@ export const createAccessRequest = async (req, res) => {
                  FROM patients p
                  JOIN users u ON u.id = p.user_id
                  WHERE LOWER(p.global_patient_id) = LOWER(?)
+                   AND p.hospital_id = ?
                  LIMIT 1`,
-                [globalPatientId]
+                [globalPatientId, doctorHospitalId]
             );
         }
 
@@ -102,8 +114,9 @@ export const createAccessRequest = async (req, res) => {
                  FROM patients p
                  JOIN users u ON u.id = p.user_id
                  WHERE LOWER(u.email) = LOWER(?)
+                   AND p.hospital_id = ?
                  LIMIT 1`,
-                [patientEmail]
+                [patientEmail, doctorHospitalId]
             );
         }
 
@@ -114,8 +127,9 @@ export const createAccessRequest = async (req, res) => {
                  JOIN users u ON u.id = p.user_id
                  WHERE regexp_replace(COALESCE(p.contact_phone, u.phone, ''), '[^0-9]', '', 'g')
                        = regexp_replace(?, '[^0-9]', '', 'g')
+                   AND p.hospital_id = ?
                  LIMIT 1`,
-                [patientPhone]
+                [patientPhone, doctorHospitalId]
             );
         }
 
@@ -153,9 +167,7 @@ export const createAccessRequest = async (req, res) => {
             });
         }
 
-        const hospitalId = req.hospitalId && req.hospitalId !== 'default_hospital'
-            ? req.hospitalId
-            : (doctor.hospital_id || null);
+        const hospitalId = doctorHospitalId;
 
         const result = await runDb(
             `INSERT INTO access_requests
@@ -302,8 +314,10 @@ export const getAccessRequest = async (req, res) => {
              JOIN users du ON du.id = d.user_id
              WHERE ar.id = ?
                AND ar.doctor_id = ?
+              AND ar.hospital_id = ?
+              AND p.hospital_id = ?
              LIMIT 1`,
-            [requestId, doctor.id]
+            [requestId, doctor.id, doctor.hospital_id, doctor.hospital_id]
         );
 
         if (!request) {
@@ -510,6 +524,22 @@ export const verifyAccessRequestOTP = async (req, res) => {
             });
         }
 
+        if (doctor.user_status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_APPROVAL_REQUIRED',
+                message: 'Doctor account is not approved for patient access.'
+            });
+        }
+
+        if (!doctor.hospital_id) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_CONTEXT_REQUIRED',
+                message: 'Doctor hospital context is required for patient access.'
+            });
+        }
+
         const requestId = req.params.id;
         const otpCode = normalize(req.body?.otpCode);
 
@@ -582,7 +612,10 @@ export const verifyAccessRequestOTP = async (req, res) => {
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?`,
                 [otpSession.id]
-            ).catch(() => {});
+            ).catch((attemptError) => {
+                console.error('[AccessRequest] Failed to record OTP attempt:', attemptError);
+                throw new Error('Failed to record OTP attempt.');
+            });
 
             return res.status(401).json({
                 success: false,
@@ -678,6 +711,22 @@ export const checkActiveAccessSession = async (req, res) => {
             });
         }
 
+        if (doctor.user_status !== 'active') {
+            return res.status(403).json({
+                success: false,
+                code: 'DOCTOR_APPROVAL_REQUIRED',
+                message: 'Doctor account is not approved for patient access.'
+            });
+        }
+
+        if (!doctor.hospital_id) {
+            return res.status(403).json({
+                success: false,
+                code: 'HOSPITAL_CONTEXT_REQUIRED',
+                message: 'Doctor hospital context is required for patient access.'
+            });
+        }
+
         const patientIdentifier = normalize(
             req.query.patientId || req.query.globalPatientId || req.query.patientEmail
         );
@@ -693,12 +742,15 @@ export const checkActiveAccessSession = async (req, res) => {
             `SELECT p.*
              FROM patients p
              JOIN users u ON u.id = p.user_id
-             WHERE p.id::text = ?
+             WHERE (
+                p.id::text = ?
                 OR p.user_id::text = ?
                 OR LOWER(p.global_patient_id) = LOWER(?)
                 OR LOWER(u.email) = LOWER(?)
-             LIMIT 1`,
-            [patientIdentifier, patientIdentifier, patientIdentifier, patientIdentifier]
+            )
+              AND p.hospital_id = ?
+            LIMIT 1`
+            [patientIdentifier, patientIdentifier, patientIdentifier, patientIdentifier, doctor.hospital_id]
         );
 
         if (!patient) {

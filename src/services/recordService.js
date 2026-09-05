@@ -11,10 +11,15 @@ export const recordService = {
     createRecord: async (recordData) => {
         try {
             const data = await apiClient.post('/records', recordData);
+
+            if (!data?.success && !data?.record && !data?.id) {
+                throw new Error(data?.error || data?.message || 'Medical record was not saved by the backend.');
+            }
+
             return data.record || { id: data.id, ...recordData };
         } catch (err) {
-            console.warn('[recordService] createRecord error:', err.message);
-            return { id: `rec_${Date.now()}`, ...recordData };
+            console.error('[recordService] createRecord failed:', err.message);
+            throw err;
         }
     },
 
@@ -114,14 +119,17 @@ export const recordService = {
                 }
             };
 
-            let savedRecord = null;
-            try {
-                savedRecord = await apiClient.post('/records', newRecordPayload);
-            } catch (postErr) {
-                console.warn('[recordService] Cloud API sync notice:', postErr.message);
+            const savedRecord = await apiClient.post('/records', newRecordPayload);
+
+            if (!savedRecord?.success || (!savedRecord?.id && !savedRecord?.record?.id)) {
+                throw new Error(
+                    savedRecord?.error ||
+                    savedRecord?.message ||
+                    'Medical record was not saved by the backend.'
+                );
             }
 
-            const recordId = savedRecord?.id || savedRecord?.record?.id || `rec_${Date.now()}`;
+            const recordId = savedRecord.id || savedRecord.record.id;
             const fullRecord = {
                 id: recordId,
                 ...newRecordPayload

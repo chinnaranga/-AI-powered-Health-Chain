@@ -9,9 +9,6 @@ import {
 import { toast } from '../components/Toast';
 import useAuthStore from '../store/authStore';
 
-const ADMIN_EMAIL    = 'admin@healthchain.io';
-const ADMIN_PASSWORD = 'Admin@2024';
-
 export default function AdminLogin() {
     const navigate = useNavigate();
     const { login } = useAuthStore();
@@ -43,25 +40,9 @@ export default function AdminLogin() {
         e.preventDefault();
         setError('');
 
-        if (step === 1) {
-            setLoading(true);
-            if (email.trim().toLowerCase() !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
-                setError('Invalid administrator credentials.');
-                setLoading(false);
-                return;
-            }
-            // Simulate credential check before 2FA
-            setTimeout(() => {
-                setLoading(false);
-                setStep(2);
-            }, 800);
-            return;
-        }
-
-        // Step 2: Proceed to firebase auth
         setLoading(true);
         try {
-            await login(email, password, 'admin');
+            await login(email.trim().toLowerCase(), password, 'admin');
             localStorage.setItem('hc_admin', 'true');
             localStorage.setItem('hc_role', 'admin');
             toast.success('Security Clearance Granted');

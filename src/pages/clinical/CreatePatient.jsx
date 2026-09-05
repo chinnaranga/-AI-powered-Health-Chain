@@ -1,3 +1,4 @@
+import apiClient from '../../services/apiClient.js';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -306,27 +307,6 @@ export default function CreatePatient() {
                     aadhaarVerified: newPatient.aadhaarVerified
                 }
             });
-
-            // Trigger backend SMS Dispatch
-            try {
-                const smsRes = await fetch('/api/send-sms', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        phone: newPatient.phone,
-                        patientName: newPatient.fullName,
-                        patientId: newPatient.patientId,
-                        globalPatientId: newPatient.globalPatientId
-                    })
-                });
-                if (smsRes.ok) {
-                    toast.success('Account creation SMS sent to patient.');
-                } else {
-                    console.warn('SMS dispatch returned error status');
-                }
-            } catch (smsErr) {
-                console.error('Failed to trigger SMS confirmation:', smsErr);
-            }
 
             toast.success('Patient profile successfully generated on-chain.');
             setCreatedPatient(newPatient);
