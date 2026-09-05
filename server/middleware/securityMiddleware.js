@@ -27,7 +27,7 @@ export function securityHeadersMiddleware(req, res, next) {
     // Content Security Policy (CSP)
     res.setHeader(
         'Content-Security-Policy',
-        "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https: http://localhost:3001 http://127.0.0.1:3001 http://127.0.0.1:8545; frame-ancestors 'none';"
+        "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors 'none';"
     );
 
     next();
