@@ -64,8 +64,7 @@ export default function PatientLogin() {
             setIsGoogleLoading(true);
             setError('');
             
-            const { GoogleAuthProvider, signInWithPopup } = await import('firebase/auth');
-            const { auth } = await import('../firebase/config');
+            const { auth, GoogleAuthProvider, signInWithPopup } = await import('../firebase/auth');
             const provider = new GoogleAuthProvider();
             provider.setCustomParameters({ prompt: 'select_account' });
             const result = await signInWithPopup(auth, provider);

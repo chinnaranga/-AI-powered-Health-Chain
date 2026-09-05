@@ -128,85 +128,91 @@ export const TwitterAuthProvider = class {
 };
 
 export const signInWithPopup = async (authInstance, provider) => {
-    let googleAccessToken = '';
-    let googleEmail = localStorage.getItem('hc_email') || '';
-    let googleName = localStorage.getItem('hc_name') || '';
-    let googlePhoto = localStorage.getItem('hc_photo') || '';
+    if (!import.meta.env.VITE_GOOGLE_CLIENT_ID) {
+        throw new Error('Google authentication is not configured.');
+    }
 
-    // 1. Try real Google Identity Services token popup if client ID configured
     try {
         if (!window.google?.accounts?.oauth2) {
-            await new Promise((resolve) => {
+            await new Promise((resolve, reject) => {
                 const script = document.createElement('script');
                 script.src = 'https://accounts.google.com/gsi/client';
                 script.async = true;
                 script.defer = true;
-                script.onload = () => resolve();
-                script.onerror = () => resolve();
+                script.onload = resolve;
+                script.onerror = () => reject(new Error('Unable to load Google authentication.'));
                 document.head.appendChild(script);
             });
         }
-    } catch (e) {}
 
-    if (window.google?.accounts?.oauth2 && import.meta.env.VITE_GOOGLE_CLIENT_ID) {
-        try {
-            const token = await new Promise((resolve, reject) => {
-                const client = window.google.accounts.oauth2.initTokenClient({
-                    client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-                    scope: 'email profile openid',
-                    prompt: 'select_account',
-                    callback: (resp) => {
-                        if (resp.access_token) resolve(resp.access_token);
-                        else reject(new Error('Google sign-in cancelled'));
-                    },
-                    error_callback: (err) => reject(err)
-                });
-                client.requestAccessToken({ prompt: 'select_account' });
+        if (!window.google?.accounts?.oauth2) {
+            throw new Error('Google authentication is unavailable.');
+        }
+
+        const googleAccessToken = await new Promise((resolve, reject) => {
+            const client = window.google.accounts.oauth2.initTokenClient({
+                client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+                scope: 'email profile openid',
+                prompt: 'select_account',
+                callback: (response) => {
+                    if (response?.access_token) {
+                        resolve(response.access_token);
+                    } else {
+                        reject(new Error('Google authentication did not return an access token.'));
+                    }
+                },
+                error_callback: () => {
+                    reject(new Error('Google authentication was cancelled or failed.'));
+                }
             });
 
-            if (token) {
-                googleAccessToken = token;
-                const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                if (res.ok) {
-                    const info = await res.json();
-                    googleEmail = info.email || googleEmail;
-                    googleName = info.name || googleName;
-                    googlePhoto = info.picture || googlePhoto;
+            client.requestAccessToken({ prompt: 'select_account' });
+        });
+
+        const response = await fetch(
+            'https://www.googleapis.com/oauth2/v3/userinfo',
+            {
+                headers: {
+                    Authorization: `Bearer ${googleAccessToken}`
                 }
             }
-        } catch (gisErr) {
-            console.warn('[Google Identity Notice]:', gisErr.message);
+        );
+
+        if (!response.ok) {
+            throw new Error('Unable to retrieve the Google account profile.');
         }
+
+        const info = await response.json();
+
+        if (!info.email || info.verified_email !== true) {
+            throw new Error('Google account email is not verified.');
+        }
+
+        const verifiedGoogleUser = {
+            uid: info.sub || `usr_google_${Date.now()}`,
+            email: info.email.trim().toLowerCase(),
+            displayName: info.name || '',
+            photoURL: info.picture || '',
+            emailVerified: true,
+            providerData: [{
+                providerId: 'google.com',
+                uid: info.sub || '',
+                displayName: info.name || '',
+                email: info.email.trim().toLowerCase(),
+                photoURL: info.picture || ''
+            }]
+        };
+
+        auth.currentUser = verifiedGoogleUser;
+
+        return {
+            user: verifiedGoogleUser,
+            accessToken: googleAccessToken
+        };
+    } catch (error) {
+        auth.currentUser = null;
+        throw error;
     }
-
-    const email = googleEmail;
-    const name = googleName;
-    const photo = googlePhoto || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80';
-    const uid = `usr_google_${Date.now()}`;
-
-    if (email) localStorage.setItem('hc_email', email);
-    if (name) localStorage.setItem('hc_name', name);
-    if (photo) localStorage.setItem('hc_photo', photo);
-
-    const verifiedGoogleUser = {
-        uid,
-        email,
-        displayName: name,
-        photoURL: photo,
-        emailVerified: true,
-        providerData: [{
-            providerId: 'google.com',
-            uid: `g_${Date.now()}`,
-            displayName: name,
-            email,
-            photoURL: photo
-        }]
-    };
-
-    auth.currentUser = verifiedGoogleUser;
-    return { user: verifiedGoogleUser, accessToken: googleAccessToken };
 };
 
 export const signInWithRedirect = async () => {};
